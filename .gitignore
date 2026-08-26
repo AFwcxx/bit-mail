@@ -1,0 +1,7 @@
+/target/
+/.bit-mail/
+/data/
+/knowledge/
+.DS_Store
+*.swp
+*.swo

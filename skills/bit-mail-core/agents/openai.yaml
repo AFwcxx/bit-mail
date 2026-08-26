@@ -1,0 +1,3 @@
+interface:
+  display_name: "bit-mail Core"
+  short_description: "Safely operate bit-mail repositories."

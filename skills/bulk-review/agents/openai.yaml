@@ -1,0 +1,3 @@
+interface:
+  display_name: "Bulk Review"
+  short_description: "Safely group and stage bulk email decisions."

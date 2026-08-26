@@ -1,0 +1,9 @@
+[package]
+name = "bit-mail"
+version = "0.0.0-dev"
+edition = "2024"
+license = "Apache-2.0"
+description = "Local-first, Git-inspired email triage framework"
+publish = false
+
+[dependencies]

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Knowledge Management"
+  short_description: "Manage approved bit-mail preferences."
