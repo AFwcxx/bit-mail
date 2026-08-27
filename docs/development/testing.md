@@ -1,5 +1,9 @@
 # Testing strategy
 
+## Conventions
+
+Keep focused unit tests beside their implementation in `#[cfg(test)]` modules. Put shared integration-test setup in `tests/common/`, adding helpers only when an integration test consumes them.
+
 ## 1. Core tests
 
 Core repository/pull/push/work-item/selection/Knowledge/integrity behavior targets a fake `MailProvider` so tests are deterministic and offline.

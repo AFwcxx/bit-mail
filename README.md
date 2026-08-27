@@ -6,7 +6,7 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-Requirements and architecture are being established first. The implementation milestones are tracked under [`docs/milestones/`](docs/milestones/README.md).
+The requirements baseline and Rust project foundation are complete. Repository and account implementation is next; progress is tracked under [`docs/milestones/`](docs/milestones/README.md).
 
 ## Core workflow
 
