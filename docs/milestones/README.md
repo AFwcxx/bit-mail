@@ -21,7 +21,7 @@ Milestones are the execution boundary for development sessions, worktrees, and p
 |---|---|---|---|
 | M000 | [Requirements baseline](000-requirements-baseline.md) | **Complete** | Product semantics, architecture boundaries, safety policies captured |
 | M001 | [Project foundation](001-project-foundation.md) | **Complete** | Buildable Rust project, module skeleton, CI/quality baseline |
-| M002 | [Repository and account core](002-repository-account-core.md) | Planned | `init`, discovery, config, account identity/scope/locking |
+| M002 | [Repository and account core](002-repository-account-core.md) | **Complete** | `init`, discovery, config, account identity/scope/locking |
 | M003 | [Credentials and Gmail connect](003-credentials-gmail-connect.md) | Planned | Secure keyring + BYO OAuth + account connection |
 | M004 | [Canonical mail storage](004-canonical-mail-storage.md) | Planned | Provider-neutral canonical messages, normalization, threads, attachments |
 | M005 | [Pull engine](005-pull-engine.md) | Planned | Bounded/incremental full-context Gmail pull and reconciliation |

@@ -15,9 +15,12 @@ This is a compact decision log. Detailed rationale lives in the linked architect
 | Gmail scope | `gmail.modify` only |
 | Credentials | OS credential store, no plaintext fallback |
 | Runtime config/data | Repository-scoped, initialized with `bit-mail init` |
+| Repository metadata/config | Immutable identity in `repository.toml`; mutable settings in `config.toml` |
+| Git ignore updates | Prompt before appending missing private-path rules; warn only when non-interactive |
 | Account identity | Immutable UUID + mutable alias |
 | Multiple accounts/repo | Yes, isolated |
 | Duplicate mailbox/repo | Prohibited |
+| Transient locks | Stable UUID-keyed paths under `.bit-mail/locks/`; account lifecycle serialized separately |
 | Provider source of truth | Always |
 | Canonical unit | Individual provider message |
 | Thread context | Complete, no truncation |
@@ -43,4 +46,5 @@ This is a compact decision log. Detailed rationale lives in the linked architect
 | Harness push | Only after explicit user authorization |
 | Runtime templates | Embedded, binary-version-matched |
 | Template updates | Binary upgrade only in v1 |
+| Template milestone boundary | M002 creates destinations; M009 installs version-matched contents |
 | Distribution | GitHub binaries + Cargo/source |

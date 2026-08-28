@@ -1,9 +1,11 @@
-use std::{error::Error, process::ExitCode};
+use std::{env, process::ExitCode};
 
-use bit_mail::cli::Cli;
-use clap::Parser;
-
-type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+use bit_mail::{
+    Result,
+    cli::{AccountCommand, Cli, Command, ConfigCommand},
+    repository::{GitIgnorePolicy, RemoveOptions, Repository, UnavailableCredentialRevoker},
+};
+use clap::{CommandFactory, Parser};
 
 fn main() -> ExitCode {
     match run() {
@@ -16,10 +18,92 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<()> {
-    let _cli = Cli::parse();
-
     tracing_subscriber::fmt().with_target(false).try_init()?;
-    tracing::info!("bit-mail implementation has not started yet; see docs/milestones/");
+    let cli = Cli::parse();
+    match cli.command {
+        None => {
+            Cli::command().print_help()?;
+            println!();
+        }
+        Some(Command::Init) => {
+            let repository = Repository::initialize(&env::current_dir()?, GitIgnorePolicy::Prompt)?;
+            println!(
+                "Initialized bit-mail repository {} at {}",
+                repository.id(),
+                repository.root().display()
+            );
+        }
+        Some(Command::Config(args)) => {
+            let repository = Repository::discover_current()?;
+            match args.command {
+                ConfigCommand::Show { json: true } => println!("{}", repository.config_json()?),
+                ConfigCommand::Show { json: false } => print!("{}", repository.config_toml()?),
+                ConfigCommand::Set { key, value } => {
+                    repository.set_config(&key, &value)?;
+                    println!("Updated {key}");
+                }
+            }
+        }
+        Some(Command::Accounts) => {
+            for account in Repository::discover_current()?.accounts()? {
+                println!("{}\t{}\t{}", account.alias, account.id, account.provider);
+            }
+        }
+        Some(Command::Account(args)) => {
+            let repository = Repository::discover_current()?;
+            match args.command {
+                AccountCommand::Rename {
+                    old_alias,
+                    new_alias,
+                } => {
+                    let account = repository.rename_account(&old_alias, &new_alias)?;
+                    println!("Renamed account to {} ({})", account.alias, account.id);
+                }
+                AccountCommand::Remove {
+                    alias,
+                    discard_local_data,
+                    keep_credentials,
+                    revoke_credentials,
+                } => {
+                    repository.remove_account(
+                        &alias,
+                        RemoveOptions {
+                            discard_local_data,
+                            keep_credentials,
+                            revoke_credentials,
+                        },
+                        &UnavailableCredentialRevoker,
+                    )?;
+                    println!("Removed account {alias}");
+                }
+            }
+        }
+        Some(Command::Path(args)) => {
+            let repository = Repository::discover_current()?;
+            if args.all_accounts {
+                if cli.account.is_some() {
+                    return Err(std::io::Error::other(
+                        "--account cannot be used with --all-accounts",
+                    )
+                    .into());
+                }
+                for account in repository.accounts()? {
+                    println!(
+                        "{}\t{}",
+                        account.alias,
+                        repository.data_dir(account.id).display()
+                    );
+                }
+            } else {
+                let account = repository.resolve_account(
+                    cli.account.as_deref(),
+                    &env::current_dir()?,
+                    env::var("BIT_MAIL_ACCOUNT").ok().as_deref(),
+                )?;
+                println!("{}", repository.data_dir(account.id).display());
+            }
+        }
+    }
 
     Ok(())
 }

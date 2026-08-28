@@ -261,9 +261,16 @@ data/<account-uuid>/messages/<message-uuid>/
 ├── identities/
 ├── integrity/
 ├── audit/
-├── index.sqlite
-└── locks/
+└── index.sqlite
+
+.bit-mail/locks/
+├── account-lifecycle.lock
+├── accounts/<account-uuid>.lock
+└── knowledge.lock
 ```
+
+Mutation locks are transient and UUID-keyed outside deletable account state so
+removing an account cannot invalidate a lock that is still held.
 
 Harness-facing stable formats:
 

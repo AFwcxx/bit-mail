@@ -30,9 +30,15 @@ data/<account-uuid>/messages/<message-uuid>/
 ├── selections/
 ├── integrity/
 ├── audit/
-├── index.sqlite
-└── locks/
+└── index.sqlite
+
+.bit-mail/locks/
+├── account-lifecycle.lock
+├── accounts/<account-uuid>.lock
+└── knowledge.lock
 ```
+
+Transient locks remain outside deletable account state so account removal cannot invalidate a held lock.
 
 Provider-specific message representations are internal and non-contractual for AI harnesses.
 

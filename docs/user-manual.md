@@ -37,6 +37,14 @@ AGENTS.md    AI bootstrap instructions
 
 `bit-mail` discovers the repository by walking upward from the current directory.
 
+M002 creates the secure repository/config/data/Knowledge layout and reserves
+the empty `skills/` destination. M009 installs the version-matched skills and
+`AGENTS.md`. Initialization can use a non-empty directory, but refuses every
+managed-path collision without modifying it; there is no `--force`.
+
+Inside Git, interactive `init` asks before adding private-path ignore rules.
+Non-interactive use only reports missing protection.
+
 ## 3. Connect Gmail
 
 ```bash
@@ -72,7 +80,7 @@ When a shell is inside that account's supported data directory, the current dire
 
 Conflicting implicit contexts fail. Use explicit `--account` to resolve ambiguity.
 
-Useful planned command:
+Account data path:
 
 ```bash
 bit-mail --account personal path
@@ -83,6 +91,14 @@ for workflows such as:
 ```bash
 cd "$(bit-mail --account personal path)"
 codex
+```
+
+`path` prints the absolute UUID-owned account data path.
+
+To print every configured account path as sorted tab-separated alias/path rows:
+
+```bash
+bit-mail path --all-accounts
 ```
 
 ## 5. Pull
@@ -413,6 +429,19 @@ bit-mail account rename personal cokeeps
 
 Account removal is conservative. It must refuse while meaningful unresolved/staged/local state exists unless explicit discard options are supplied. OAuth revocation is separate/explicit from removing a local account binding.
 
+```bash
+bit-mail account remove personal --discard-local-data --keep-credentials
+bit-mail account remove personal --discard-local-data --revoke-credentials
+```
+
+M002 implements the removal policy and revocation boundary. The real secure
+credential backend required by `--revoke-credentials` lands with M003; until
+then that choice fails without removing local state.
+
+Account-scoped Knowledge is never discarded by account removal. If
+`knowledge/accounts/<account-uuid>/` exists, it remains at that UUID-owned path
+for manual recovery and the command prints its location.
+
 ## 18. Configuration
 
 Configuration is plain and inspectable but framework-owned. Normal changes use CLI:
@@ -424,6 +453,8 @@ bit-mail config set pull.default-limit 1000
 ```
 
 AI harnesses must never edit `.bit-mail/config.toml` directly.
+M002 supports only `pull.default-limit`, a positive integer with default 500.
+Unsupported keys are rejected, so secrets cannot be added through this CLI.
 
 ## 19. Offline use
 

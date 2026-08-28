@@ -7,13 +7,40 @@ A runtime repository is a self-contained triage environment initialized by `bit-
 ```text
 repo-root/
 ├── .bit-mail/
+│   ├── accounts/
+│   ├── locks/
+│   │   └── accounts/
+│   ├── config.toml
+│   └── repository.toml
 ├── data/
 ├── knowledge/
-├── skills/
-└── AGENTS.md
+└── skills/
 ```
 
 `.bit-mail/` is the repository marker and framework-owned internal namespace.
+M002 creates the empty `skills/` destination. M009 installs the version-matched
+skill contents and `AGENTS.md` bootstrap.
+
+## Versioned repository files
+
+`.bit-mail/repository.toml` contains immutable repository identity:
+
+```toml
+schema_version = 1
+id = "<uuid-v4>"
+```
+
+`.bit-mail/config.toml` contains mutable framework configuration:
+
+```toml
+schema_version = 1
+
+[pull]
+default_limit = 500
+```
+
+Unknown fields and unsupported schema versions are rejected. The only M002
+`config set` key is `pull.default-limit`, which must be a positive integer.
 
 ## Repository discovery
 
@@ -27,23 +54,33 @@ Every repository has an immutable UUID. It is non-secret and participates in nam
 
 Each account has immutable UUID identity and mutable alias presentation.
 
-Conceptual config:
+Account configuration is UUID-owned at
+`.bit-mail/accounts/<account-uuid>/account.toml`:
 
 ```toml
-[accounts.personal]
+schema_version = 1
 id = "<uuid>"
+alias = "personal"
 provider = "gmail"
-address = "user@example.com"
-credential_profile = "google-default"
+provider_identity = "user@example.com" # optional until provider identity exists
+credential_profile = "google-default"  # optional non-secret reference
 ```
 
 Internal paths use account UUID, not alias, so alias rename is a configuration operation rather than a data migration.
+Aliases are 1-32 lowercase ASCII letters/digits, `-`, or `_`; the first and
+last characters must be alphanumeric.
 
 ## Account isolation
 
 Each account owns independent provider state, cache, work items, selections, structural index, integrity branch, audit, and lock.
 
 Mutations to unrelated accounts can run concurrently.
+
+Transient account mutation locks use
+`.bit-mail/locks/accounts/<account-uuid>.lock`. Repository-wide account
+lifecycle changes use `.bit-mail/locks/account-lifecycle.lock`, and global
+Knowledge uses `.bit-mail/locks/knowledge.lock`. Keeping these locks outside
+deletable account state prevents removal from invalidating a held lock.
 
 ## Account selection
 
@@ -57,9 +94,22 @@ Resolution order:
 
 Conflicting implicit contexts fail closed.
 
+Only commands that support repository-wide account inspection expose
+`--all-accounts`. In M002, `bit-mail path --all-accounts` prints each alias and
+its UUID-owned data path; account mutation commands cannot parse the flag.
+
+Removing an account never removes `knowledge/accounts/<account-uuid>/`.
+Existing account Knowledge remains at its UUID-owned path for manual recovery.
+
 ## Git relationship
 
 A `bit-mail` repository is not a Git repository and does not require Git. When initialized inside Git, private runtime paths must be ignored/protected and accidental tracking detected.
+
+If Git is detected and required ignore coverage is missing, interactive `init`
+offers to append only the missing repository-relative rules. Declining or
+running non-interactively leaves `.gitignore` unchanged and prints the rules.
+When the Git executable is available, broader existing ignore rules and
+already-tracked private paths are verified directly.
 
 ## Source repository distinction
 
