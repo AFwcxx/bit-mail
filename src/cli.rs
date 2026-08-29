@@ -15,6 +15,12 @@ pub struct Cli {
 pub enum Command {
     /// Initialize a runtime repository in the current directory.
     Init,
+    /// Connect or reauthorize a Gmail account.
+    Connect {
+        /// Reauthorize an existing account alias.
+        #[arg(long, value_name = "ALIAS")]
+        reauthorize: Option<String>,
+    },
     /// Read or update framework configuration.
     Config(ConfigArgs),
     /// List configured accounts.
@@ -92,5 +98,11 @@ mod tests {
             .expect_err("unimplemented commands must be rejected");
 
         assert_eq!(error.kind(), ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn connect_and_reauthorize_have_stable_cli_shapes() {
+        assert!(Cli::try_parse_from(["bit-mail", "connect"]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "connect", "--reauthorize", "personal"]).is_ok());
     }
 }

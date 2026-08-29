@@ -434,9 +434,10 @@ bit-mail account remove personal --discard-local-data --keep-credentials
 bit-mail account remove personal --discard-local-data --revoke-credentials
 ```
 
-M002 implements the removal policy and revocation boundary. The real secure
-credential backend required by `--revoke-credentials` lands with M003; until
-then that choice fails without removing local state.
+`--revoke-credentials` revokes the Google token and removes its OS-keyring
+entry before deleting local account state. Revocation failure preserves the
+account binding. `--keep-credentials` leaves the external grant and keyring
+entry intact.
 
 Account-scoped Knowledge is never discarded by account removal. If
 `knowledge/accounts/<account-uuid>/` exists, it remains at that UUID-owned path

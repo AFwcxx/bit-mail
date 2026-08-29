@@ -3,7 +3,8 @@ use std::{env, process::ExitCode};
 use bit_mail::{
     Result,
     cli::{AccountCommand, Cli, Command, ConfigCommand},
-    repository::{GitIgnorePolicy, RemoveOptions, Repository, UnavailableCredentialRevoker},
+    credentials::{GoogleCredentialRevoker, KeyringStore},
+    repository::{GitIgnorePolicy, RemoveOptions, Repository},
 };
 use clap::{CommandFactory, Parser};
 
@@ -32,6 +33,10 @@ fn run() -> Result<()> {
                 repository.id(),
                 repository.root().display()
             );
+        }
+        Some(Command::Connect { reauthorize }) => {
+            let repository = Repository::discover_current()?;
+            bit_mail::connect::run(&repository, reauthorize.as_deref())?;
         }
         Some(Command::Config(args)) => {
             let repository = Repository::discover_current()?;
@@ -65,6 +70,7 @@ fn run() -> Result<()> {
                     keep_credentials,
                     revoke_credentials,
                 } => {
+                    let store = KeyringStore::new(repository.id());
                     repository.remove_account(
                         &alias,
                         RemoveOptions {
@@ -72,7 +78,7 @@ fn run() -> Result<()> {
                             keep_credentials,
                             revoke_credentials,
                         },
-                        &UnavailableCredentialRevoker,
+                        &GoogleCredentialRevoker { store: &store },
                     )?;
                     println!("Removed account {alias}");
                 }

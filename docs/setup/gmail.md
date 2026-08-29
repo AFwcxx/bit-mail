@@ -1,6 +1,20 @@
 # Gmail setup
 
-> This document records the intended v1 setup model. Exact Google Console screenshots/labels should be verified against current Google documentation during implementation/release documentation work.
+These steps match the Google Auth Platform UI documented in August 2026.
+
+## Google Cloud setup
+
+1. Create or select a Google Cloud project and enable the Gmail API.
+2. Open **Google Auth Platform** and configure Branding, Audience, and Data Access.
+3. Choose **External** for personal Gmail or mixed Gmail/Workspace use. Add each
+   account as a test user while the app remains in Testing. Choose **Internal**
+   only when every mailbox belongs to the same Google Workspace organization.
+4. Add only `https://www.googleapis.com/auth/gmail.modify` under Data Access.
+5. Open **Clients**, create a **Desktop app**, and download its JSON file.
+
+External apps in Testing receive authorizations that expire after seven days
+when restricted Gmail scopes are requested. Use an appropriate production
+publishing configuration for durable use.
 
 ## OAuth model
 
@@ -30,15 +44,11 @@ Expected flow:
 bit-mail connect
 ```
 
-1. choose Gmail;
-2. choose account alias;
-3. select an existing OAuth client profile or import a new Desktop OAuth client JSON;
-4. store OAuth client secret material in the OS credential store;
-5. run interactive browser authorization;
-6. fetch authenticated Gmail profile;
-7. reject duplicate mailbox in this repository;
-8. store refresh token securely;
-9. initialize account state.
+Enter an account alias and OAuth client profile alias when prompted. A new
+profile also prompts for the downloaded Desktop client JSON path. Existing
+profiles can be reused for multiple mailboxes; each mailbox receives its own
+keyring-backed refresh token. If the browser cannot be launched, open the URL
+printed by `bit-mail` manually. Failed authorization creates no account.
 
 ## Reauthorization
 
@@ -49,3 +59,11 @@ bit-mail connect --reauthorize <alias>
 ```
 
 `bit-mail doctor` should identify invalid/missing provider authorization and point to this path.
+
+Reauthorization must select the same mailbox. On a new machine, it also asks
+for the original Desktop client JSON when that profile's client secret is not
+present in the local credential store.
+
+`account remove --revoke-credentials` revokes the token at Google before
+deleting it locally. Google revocation can invalidate other grants for the
+same user and Cloud project; use `--keep-credentials` when that is not wanted.

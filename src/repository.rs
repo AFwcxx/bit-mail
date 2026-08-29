@@ -27,6 +27,17 @@ pub struct RepositoryMetadata {
 pub struct Config {
     pub schema_version: u32,
     pub pull: PullConfig,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oauth_clients: Vec<OAuthClientProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OAuthClientProfile {
+    pub id: Uuid,
+    pub alias: String,
+    pub provider: String,
+    pub client_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +51,7 @@ impl Default for Config {
         Self {
             schema_version: SCHEMA_VERSION,
             pull: PullConfig { default_limit: 500 },
+            oauth_clients: Vec::new(),
         }
     }
 }
@@ -156,6 +168,7 @@ impl Repository {
     }
 
     pub fn set_config(&self, key: &str, value: &str) -> Result<Config> {
+        let _lifecycle_lock = self.account_lifecycle_lock()?;
         let mut config = self.config()?;
         match key {
             "pull.default-limit" => {
@@ -169,6 +182,28 @@ impl Repository {
         }
         write_toml_atomic(&self.root.join(".bit-mail/config.toml"), &config)?;
         Ok(config)
+    }
+
+    pub fn add_oauth_profile(&self, profile: OAuthClientProfile) -> Result<()> {
+        validate_alias(&profile.alias)?;
+        if profile.provider != "google" || profile.client_id.trim().is_empty() {
+            return Err(message("invalid Google OAuth client profile"));
+        }
+        let _lifecycle_lock = self.account_lifecycle_lock()?;
+        let mut config = self.config()?;
+        if config
+            .oauth_clients
+            .iter()
+            .any(|item| item.alias == profile.alias)
+        {
+            return Err(message(format!(
+                "OAuth client profile already exists: {}",
+                profile.alias
+            )));
+        }
+        config.oauth_clients.push(profile);
+        config.oauth_clients.sort_by(|a, b| a.alias.cmp(&b.alias));
+        write_toml_atomic(&self.root.join(".bit-mail/config.toml"), &config)
     }
 
     pub fn config_toml(&self) -> Result<String> {
@@ -497,6 +532,14 @@ impl Repository {
     }
 
     pub fn create_account(&self, new: NewAccount<'_>) -> Result<AccountConfig> {
+        self.create_account_with_id(Uuid::new_v4(), new)
+    }
+
+    pub(crate) fn create_account_with_id(
+        &self,
+        id: Uuid,
+        new: NewAccount<'_>,
+    ) -> Result<AccountConfig> {
         validate_alias(new.alias)?;
         let _lifecycle_lock = self.account_lifecycle_lock()?;
         let accounts = self.accounts()?;
@@ -509,7 +552,10 @@ impl Repository {
         if let Some(identity) = new.provider_identity
             && accounts.iter().any(|account| {
                 account.provider == new.provider
-                    && account.provider_identity.as_deref() == Some(identity)
+                    && account
+                        .provider_identity
+                        .as_ref()
+                        .is_some_and(|existing| existing.eq_ignore_ascii_case(identity))
             })
         {
             return Err(message(format!(
@@ -519,7 +565,7 @@ impl Repository {
 
         let account = AccountConfig {
             schema_version: SCHEMA_VERSION,
-            id: Uuid::new_v4(),
+            id,
             alias: new.alias.to_owned(),
             provider: new.provider.to_owned(),
             provider_identity: new.provider_identity.map(str::to_owned),
@@ -687,7 +733,7 @@ impl Repository {
     }
 
     fn account_lifecycle_lock(&self) -> Result<MutationLock> {
-        // ponytail: account lifecycle is rare; split this lock only if contention is measurable.
+        // ponytail: lifecycle/config writes are rare; split this lock only if contention is measurable.
         MutationLock::acquire(self.root.join(".bit-mail/locks/account-lifecycle.lock"))
     }
 
@@ -720,7 +766,7 @@ impl Repository {
     }
 }
 
-fn validate_alias(alias: &str) -> Result<()> {
+pub(crate) fn validate_alias(alias: &str) -> Result<()> {
     let bytes = alias.as_bytes();
     if bytes.is_empty()
         || bytes.len() > 32
@@ -904,6 +950,16 @@ mod tests {
         assert!(
             repository
                 .create_account(NewAccount {
+                    alias: "case-variant",
+                    provider: "gmail",
+                    provider_identity: Some("PERSON@EXAMPLE.COM"),
+                    credential_profile: None,
+                })
+                .is_err()
+        );
+        assert!(
+            repository
+                .create_account(NewAccount {
                     alias: "other",
                     provider: "gmail",
                     provider_identity: Some("person@example.com"),
@@ -1078,7 +1134,7 @@ mod tests {
     }
 
     #[test]
-    fn account_lifecycle_lock_guards_uniqueness_changes() {
+    fn lifecycle_lock_guards_config_and_account_changes() {
         let (_directory, repository) = repository();
         add_account(&repository, "personal", "person@example.com");
         let lifecycle_lock = repository.account_lifecycle_lock().expect("lifecycle lock");
@@ -1112,6 +1168,19 @@ mod tests {
                             )
                             .expect_err("remove must contend")
                             .to_string(),
+                        repository
+                            .set_config("pull.default-limit", "1000")
+                            .expect_err("config update must contend")
+                            .to_string(),
+                        repository
+                            .add_oauth_profile(OAuthClientProfile {
+                                id: Uuid::new_v4(),
+                                alias: "google".into(),
+                                provider: "google".into(),
+                                client_id: "id".into(),
+                            })
+                            .expect_err("OAuth profile update must contend")
+                            .to_string(),
                     ]
                 })
                 .join()
@@ -1125,6 +1194,20 @@ mod tests {
         );
         drop(lifecycle_lock);
         assert!(repository.account_by_alias("personal").is_ok());
+        repository
+            .set_config("pull.default-limit", "1000")
+            .expect("config update after lock release");
+        repository
+            .add_oauth_profile(OAuthClientProfile {
+                id: Uuid::new_v4(),
+                alias: "google".into(),
+                provider: "google".into(),
+                client_id: "id".into(),
+            })
+            .expect("OAuth profile update after lock release");
+        let config = repository.config().expect("preserved config updates");
+        assert_eq!(config.pull.default_limit, 1000);
+        assert_eq!(config.oauth_clients.len(), 1);
     }
 
     #[test]
