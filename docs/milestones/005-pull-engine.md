@@ -12,6 +12,12 @@
 - [ ] Timeouts, bounded retry/backoff, `Retry-After`, 429 and 5xx handling.
 - [ ] Authentication error mapping.
 
+## On-demand provider content
+
+- [ ] Implement `attachment fetch <message-id> <part-id>` using M004 locality checks and persistence; skip provider I/O when already local.
+- [ ] Implement `raw fetch <message-id>` using M004's internal raw location contract; raw source remains optional for ordinary correctness.
+- [ ] Keep provider attachment/raw IDs and payloads behind the adapter boundary.
+
 ## Seed/backlog discovery
 
 - [ ] Query `INBOX + UNREAD` seeds regardless of Gmail category.

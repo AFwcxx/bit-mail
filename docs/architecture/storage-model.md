@@ -15,6 +15,14 @@ data/<account-uuid>/messages/<message-uuid>/
 
 `content.md` and `metadata.json` are stable harness-facing formats. Attachments are present when already received or explicitly fetched.
 
+`metadata.json` schema version 1 contains the canonical message UUID,
+received/sent Unix-millisecond timestamps, decoded subject and RFC Message-ID,
+structured address lists, provider-independent Inbox/unread/Sent/Trash flags,
+attachment descriptors, and `complete` or `partial` normalization status.
+Attachment descriptors expose a stable MIME part ID, original filename, media
+type, size, locality, and a relative path only when bytes are local. Provider
+message/thread/attachment IDs never appear here.
+
 `data/` is readable but framework-managed. Harnesses must not write it.
 
 ## Internal provider/framework state
@@ -40,15 +48,25 @@ data/<account-uuid>/messages/<message-uuid>/
 
 Transient locks remain outside deletable account state so account removal cannot invalidate a held lock.
 
-Provider-specific message representations are internal and non-contractual for AI harnesses.
+Provider-specific source records live at
+`provider/messages/<message-uuid>.json`; raw source, when M005 implements the
+provider-backed command, lives at `provider/raw/<message-uuid>.eml`. Remote
+attachment IDs and content-redacted normalization diagnostics remain internal
+and non-contractual for AI harnesses. Raw source is never required for normal
+materialization or correctness. Materialization staging also stays below the
+account's internal state, so temporary or crash-leftover objects never appear
+in harness-facing `data/`.
 
 ## Canonical identity
 
-Message UUIDv7 is provider-independent and stable for the repository lifetime. A durable identity map retains `(provider message ID -> bit-mail UUID)` across cache rebuilds.
+Message UUIDv7 is provider-independent and stable for the repository lifetime.
+Each `identities/messages/<message-uuid>.json` record maps provider + provider
+message ID to that UUID and survives cache/index rebuilds.
 
 ## Threads
 
-Thread manifests are internal references in chronological/conversation order. They do not contain message copies.
+Versioned thread manifests contain provider identity plus canonical message UUID
+references in provider conversation order. They do not contain message copies.
 
 Full thread context is materialized for every actionable unread message. Context-only messages have no work item.
 
@@ -64,12 +82,34 @@ Only unread Inbox messages receive work items.
 
 ## Normalization
 
-Deterministic, preservation-oriented normalization produces `content.md`. Partial parsing creates diagnostics and preserves provider truth internally; messages are never silently dropped.
+Deterministic, preservation-oriented normalization produces UTF-8 `content.md`
+with LF line endings and exactly one final newline. It prefers non-empty
+non-attachment `text/plain` within each `multipart/alternative`, otherwise
+converts that alternative's HTML to Markdown without network access.
+Independent body parts retain MIME order; links, quoted history, signatures,
+and footers are preserved. MIME media types are matched case-insensitively.
+M005 maps Gmail's structured MIME payload; `mail-parser` supplies charset and
+transfer decoding, and `htmd` handles HTML. Partial parsing creates
+content-redacted diagnostics and preserves provider truth internally; messages
+are never silently dropped.
 
 ## Attachments
 
-If provider bytes are already present, store them. Otherwise keep attachment metadata internally and fetch on demand. Attachment cache follows thread reachability and is disposable.
+If provider bytes are already present, store them below the canonical message
+using `<part-id>--<sanitized-name>`; the unmodified name stays in metadata.
+Otherwise keep the provider attachment reference internally for M005's fetch
+operation. Part IDs and generated paths reject traversal and separators.
+M005 can inspect attachment locality before provider I/O and atomically persist
+fetched bytes through the canonical store; an already-local fetch is a no-op.
+Routine re-materialization preserves matching fetched bytes unless the provider
+delivers replacement bytes or changes the part's declared size. Attachment
+cache follows message/thread reachability and is disposable through explicit
+cache rebuild or garbage collection.
 
 ## Structural index
 
-SQLite accelerates structural/domain lookup only. It is derived and rebuildable. No generic FTS requirement exists in v1.
+SQLite schema version 1 indexes provider/message identity, canonical paths,
+thread manifest/order, and attachment locality. It is atomically rebuilt from
+identity records, canonical metadata, and thread manifests. M006 may replace
+the disposable schema to add work-item/selection relationships. No generic FTS
+requirement exists in v1.

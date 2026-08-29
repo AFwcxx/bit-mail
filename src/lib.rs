@@ -8,5 +8,6 @@ pub mod connect;
 pub mod credentials;
 pub mod gmail;
 pub mod repository;
+pub mod storage;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
