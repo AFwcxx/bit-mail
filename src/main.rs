@@ -2,9 +2,10 @@ use std::{env, process::ExitCode};
 
 use bit_mail::{
     Result,
-    cli::{AccountCommand, Cli, Command, ConfigCommand},
+    cli::{AccountCommand, AttachmentCommand, Cli, Command, ConfigCommand, RawCommand},
     credentials::{GoogleCredentialRevoker, KeyringStore},
-    repository::{GitIgnorePolicy, RemoveOptions, Repository},
+    pull::{AccountReport, PullReport},
+    repository::{AccountConfig, GitIgnorePolicy, RemoveOptions, Repository},
 };
 use clap::{CommandFactory, Parser};
 
@@ -16,6 +17,24 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn pull_accounts(
+    accounts: Vec<AccountConfig>,
+    mut pull: impl FnMut(&AccountConfig) -> Result<AccountReport>,
+) -> PullReport {
+    PullReport::new(
+        accounts
+            .iter()
+            .map(|account| match pull(account) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("error: pull failed for {}: {error}", account.alias);
+                    bit_mail::pull::failed_account_report(account)
+                }
+            })
+            .collect(),
+    )
 }
 
 fn run() -> Result<()> {
@@ -109,7 +128,164 @@ fn run() -> Result<()> {
                 println!("{}", repository.data_dir(account.id).display());
             }
         }
+        Some(Command::Pull(args)) => {
+            let repository = Repository::discover_current()?;
+            if args.all_accounts && cli.account.is_some() {
+                return Err(
+                    std::io::Error::other("--account cannot be used with --all-accounts").into(),
+                );
+            }
+            let accounts = if args.all_accounts {
+                repository.accounts()?
+            } else {
+                vec![repository.resolve_account(
+                    cli.account.as_deref(),
+                    &env::current_dir()?,
+                    env::var("BIT_MAIL_ACCOUNT").ok().as_deref(),
+                )?]
+            };
+            let options = bit_mail::pull::PullOptions {
+                limit: args
+                    .limit
+                    .unwrap_or(repository.config()?.pull.default_limit),
+                all: args.all,
+            };
+            let store = KeyringStore::new(repository.id());
+            let report = pull_accounts(accounts, |account| {
+                bit_mail::pull::pull_account(&repository, account, options, || {
+                    Ok(Box::new(bit_mail::gmail::authorized_client(
+                        &repository,
+                        account,
+                        &store,
+                    )?))
+                })
+            });
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                for account in &report.accounts {
+                    let retries = account
+                        .retries
+                        .map_or_else(|| "unknown".into(), |value| value.to_string());
+                    let backlog = account.backlog_remaining.map_or("unknown", |remaining| {
+                        if remaining { "remaining" } else { "clear" }
+                    });
+                    println!(
+                        "{}: {:?}; {} seeds, {} threads, {} additional unread, {} new/{} removed work items, {} retries, {} failures, backlog {}",
+                        account.alias,
+                        account.outcome,
+                        account.seeds,
+                        account.threads,
+                        account.additional_unread,
+                        account.new_work_items,
+                        account.removed_work_items,
+                        retries,
+                        account.failures,
+                        backlog
+                    );
+                }
+            }
+            if report.failed() {
+                return Err(std::io::Error::other(
+                    "pull completed with blocked or failed accounts",
+                )
+                .into());
+            }
+        }
+        Some(Command::Attachment(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = repository.resolve_account(
+                cli.account.as_deref(),
+                &env::current_dir()?,
+                env::var("BIT_MAIL_ACCOUNT").ok().as_deref(),
+            )?;
+            let store = KeyringStore::new(repository.id());
+            let AttachmentCommand::Fetch {
+                message_id,
+                part_id,
+            } = args.command;
+            let path = bit_mail::pull::fetch_attachment(
+                &repository,
+                &account,
+                message_id,
+                &part_id,
+                || {
+                    Ok(Box::new(bit_mail::gmail::authorized_client(
+                        &repository,
+                        &account,
+                        &store,
+                    )?))
+                },
+            )?;
+            println!("{}", path.display());
+        }
+        Some(Command::Raw(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = repository.resolve_account(
+                cli.account.as_deref(),
+                &env::current_dir()?,
+                env::var("BIT_MAIL_ACCOUNT").ok().as_deref(),
+            )?;
+            let store = KeyringStore::new(repository.id());
+            let RawCommand::Fetch { message_id } = args.command;
+            let path = bit_mail::pull::fetch_raw(&repository, &account, message_id, || {
+                Ok(Box::new(bit_mail::gmail::authorized_client(
+                    &repository,
+                    &account,
+                    &store,
+                )?))
+            })?;
+            println!("{}", path.display());
+        }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bit_mail::pull::Outcome;
+    use uuid::Uuid;
+
+    fn account(alias: &str) -> AccountConfig {
+        AccountConfig {
+            schema_version: 1,
+            id: Uuid::new_v4(),
+            alias: alias.into(),
+            provider: "gmail".into(),
+            provider_identity: None,
+            credential_profile: None,
+        }
+    }
+
+    #[test]
+    fn blocked_account_does_not_stop_the_next_account() {
+        let accounts = vec![account("blocked"), account("clean")];
+        let mut visited = Vec::new();
+        let report = pull_accounts(accounts, |account| {
+            visited.push(account.alias.clone());
+            let mut value = bit_mail::pull::failed_account_report(account);
+            value.outcome = if account.alias == "blocked" {
+                Outcome::Blocked
+            } else {
+                Outcome::Success
+            };
+            value.failures = 0;
+            Ok(value)
+        });
+
+        assert_eq!(visited, ["blocked", "clean"]);
+        assert!(matches!(report.accounts[0].outcome, Outcome::Blocked));
+        assert!(matches!(report.accounts[1].outcome, Outcome::Success));
+    }
+
+    #[test]
+    fn unavailable_failure_metrics_are_null() {
+        let report = bit_mail::pull::failed_account_report(&account("failed"));
+        let json = serde_json::to_value(report).unwrap();
+
+        assert!(json["retries"].is_null());
+        assert!(json["backlog_remaining"].is_null());
+    }
 }

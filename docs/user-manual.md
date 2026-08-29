@@ -126,9 +126,12 @@ Explicit larger pulls:
 bit-mail pull --limit 2000
 bit-mail pull --all
 bit-mail pull --all-accounts
+bit-mail pull --json
 ```
 
-`--limit` is a seed count, not an exact final work-item count because complete threads can reveal more unread actionable messages.
+`--limit` bounds unread-backlog seeds, not incremental Gmail history reconciliation or the final work-item count. Complete threads can reveal more unread actionable messages, and the reported seed count includes unique actionable messages from both history and backlog, so either count may exceed the limit.
+
+In JSON output, `retries` or `backlog_remaining` is `null` when a pull stops before that value can be known.
 
 ### Pull blocking
 
@@ -281,6 +284,13 @@ bit-mail attachment fetch <message-id> <part-id>
 ```
 
 If already local, the command is idempotent and does not use the network.
+
+Optional raw RFC/MIME source is fetched into provider-internal storage and is
+also idempotent:
+
+```bash
+bit-mail raw fetch <message-id>
+```
 
 AI/humans should fetch an attachment before deciding when the message cannot be understood accurately without it.
 

@@ -168,9 +168,9 @@ By default Gmail seeds are messages that are both `INBOX` and `UNREAD`, regardle
 
 Read, archived, Sent, or otherwise non-actionable messages are still materialized when they belong to the complete thread of an actionable unread Inbox message.
 
-Default pull is bounded and newest-first. Initial target default is 500 seed messages per account, configurable later. `--all` explicitly requests the entire unread backlog.
+Default unread-backlog discovery is bounded and newest-first. Initial target default is 500 backlog seed messages per account, configurable later. `--all` explicitly requests the entire unread backlog.
 
-`--limit` counts seed unread messages, not the final work-item count. Full-thread materialization may discover additional unread Inbox messages; they become work items immediately, even if the final count exceeds the seed limit.
+`--limit` counts unread-backlog seeds, not incremental Gmail history changes or the final work-item count. History reconciliation remains exhaustive so its cursor can advance safely. Full-thread materialization may discover additional unread Inbox messages; they become work items immediately, even if the final count exceeds the backlog limit. The reported seed count includes unique actionable messages discovered from both history and backlog, so it may exceed `--limit`.
 
 Per-account provider state combines:
 
@@ -564,7 +564,7 @@ Retries:
 - authentication failure => stop/report clearly;
 - permanent per-message/provider error => keep affected local state retryable and continue unrelated items where safe.
 
-`pull` materializes a complete thread/message set into temporary state first, normalizes it, generates integrity metadata, validates it, and only then publishes it atomically. Half-materialized canonical objects must never become visible to the harness.
+`pull` materializes a complete thread/message set into temporary state first, normalizes and structurally validates it, then atomically publishes each canonical message. The thread manifest and disposable index complete before new work items are exposed, and checkpoints advance last. Interrupted multi-message publication remains retryable, and half-written canonical objects must never become visible to the harness. M007 adds cryptographic integrity metadata and validation.
 
 Provider cursors/checkpoints advance conservatively so failed items cannot disappear from future consideration.
 

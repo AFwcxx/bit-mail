@@ -24,7 +24,7 @@ Milestones are the execution boundary for development sessions, worktrees, and p
 | M002 | [Repository and account core](002-repository-account-core.md) | **Complete** | `init`, discovery, config, account identity/scope/locking |
 | M003 | [Credentials and Gmail connect](003-credentials-gmail-connect.md) | Completed | Secure keyring + BYO OAuth + account connection |
 | M004 | [Canonical mail storage](004-canonical-mail-storage.md) | **Complete** | Provider-neutral canonical messages, normalization, threads, attachments |
-| M005 | [Pull engine](005-pull-engine.md) | Planned | Bounded/incremental full-context Gmail pull and reconciliation |
+| M005 | [Pull engine](005-pull-engine.md) | **Complete** | Bounded/incremental full-context Gmail pull and reconciliation |
 | M006 | [Triage state, selections, Knowledge](006-triage-state-selections-knowledge.md) | Planned | Work items, stage/unstage, selections, Knowledge |
 | M007 | [Integrity and recovery](007-integrity-recovery.md) | Planned | BLAKE3 Merkle integrity, repair, GC, cache rebuild |
 | M008 | [Push engine](008-push-engine.md) | Planned | Reviewed/idempotent Gmail read/Trash commit path |

@@ -240,6 +240,10 @@ impl CanonicalStore {
 
     pub fn materialize_thread(&self, thread: &ThreadInput) -> Result<Vec<Uuid>> {
         let _lock = self.account_lock()?;
+        self.materialize_thread_unlocked(thread)
+    }
+
+    pub(crate) fn materialize_thread_unlocked(&self, thread: &ThreadInput) -> Result<Vec<Uuid>> {
         if thread.provider != self.provider {
             return Err(error("thread provider does not match account provider"));
         }
@@ -549,6 +553,15 @@ impl CanonicalStore {
         bytes: &[u8],
     ) -> Result<PathBuf> {
         let _lock = self.account_lock()?;
+        self.persist_attachment_unlocked(message_id, part_id, bytes)
+    }
+
+    pub(crate) fn persist_attachment_unlocked(
+        &self,
+        message_id: Uuid,
+        part_id: &str,
+        bytes: &[u8],
+    ) -> Result<PathBuf> {
         self.create_layout()?;
         let remote = match self.attachment_state(message_id, part_id)? {
             AttachmentState::Local { path } => return Ok(path),
@@ -614,6 +627,44 @@ impl CanonicalStore {
         self.account_dir()
             .join("provider/raw")
             .join(format!("{message_id}.eml"))
+    }
+
+    pub(crate) fn persist_raw_unlocked(&self, message_id: Uuid, bytes: &[u8]) -> Result<PathBuf> {
+        self.provider_message_id(message_id)?;
+        let path = self.raw_path(message_id);
+        if path.is_file() {
+            return Ok(path);
+        }
+        create_private_dir(path.parent().expect("raw parent"))?;
+        write_private(&path.with_extension("eml.tmp"), bytes)?;
+        fs::rename(path.with_extension("eml.tmp"), &path)?;
+        Ok(path)
+    }
+
+    pub(crate) fn message_id_for_provider(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<Option<Uuid>> {
+        if !self.identities_dir().is_dir() {
+            return Ok(None);
+        }
+        for path in sorted_files(&self.identities_dir())? {
+            let identity: IdentityRecord = read_json(&path)?;
+            require_version(identity.schema_version, "identity")?;
+            if identity.provider == self.provider
+                && identity.provider_message_id == provider_message_id
+            {
+                return Ok(Some(identity.message_id));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn provider_message_id(&self, message_id: Uuid) -> Result<String> {
+        let record: ProviderRecord =
+            read_json(&self.provider_dir().join(format!("{message_id}.json")))?;
+        require_version(record.schema_version, "provider message")?;
+        Ok(record.provider_message_id)
     }
 
     fn message_id(&self, provider: &str, provider_message_id: &str) -> Result<Uuid> {

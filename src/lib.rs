@@ -7,6 +7,8 @@ pub mod cli;
 pub mod connect;
 pub mod credentials;
 pub mod gmail;
+pub mod provider;
+pub mod pull;
 pub mod repository;
 pub mod storage;
 

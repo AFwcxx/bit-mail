@@ -29,6 +29,49 @@ pub enum Command {
     Account(AccountArgs),
     /// Print the selected account's data path.
     Path(AccountScopeArgs),
+    /// Pull provider truth into the local repository.
+    Pull(PullArgs),
+    /// Fetch an attachment on demand.
+    Attachment(AttachmentArgs),
+    /// Fetch optional raw message source.
+    Raw(RawArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PullArgs {
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "all")]
+    pub limit: Option<u32>,
+    #[arg(long)]
+    pub all: bool,
+    #[arg(long)]
+    pub all_accounts: bool,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AttachmentArgs {
+    #[command(subcommand)]
+    pub command: AttachmentCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AttachmentCommand {
+    Fetch {
+        message_id: uuid::Uuid,
+        part_id: String,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct RawArgs {
+    #[command(subcommand)]
+    pub command: RawCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RawCommand {
+    Fetch { message_id: uuid::Uuid },
 }
 
 #[derive(Debug, Args)]
@@ -91,13 +134,11 @@ mod tests {
     use super::Cli;
 
     #[test]
-    fn planned_commands_are_not_claimed_before_they_are_implemented() {
+    fn pull_cli_rejects_conflicting_bounds() {
         Cli::command().debug_assert();
-
-        let error = Cli::try_parse_from(["bit-mail", "pull"])
-            .expect_err("unimplemented commands must be rejected");
-
-        assert_eq!(error.kind(), ErrorKind::InvalidSubcommand);
+        let error = Cli::try_parse_from(["bit-mail", "pull", "--all", "--limit", "2"])
+            .expect_err("bounds conflict");
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
     }
 
     #[test]

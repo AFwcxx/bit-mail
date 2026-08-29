@@ -6,9 +6,9 @@
 
 ## Work items
 
-- [ ] Implement versioned work-item persistent schema.
-- [ ] State enum exactly `pending | read | delete`.
-- [ ] Only actionable unread Inbox messages have work items.
+- [x] Versioned work-item persistent schema created by M005 for reuse here.
+- [x] State enum exactly `pending | read | delete`, created by M005.
+- [x] M005 creates work items only for actionable unread Inbox messages.
 - [ ] Implement `work-items` human output.
 - [ ] Implement `work-items --state ...`.
 - [ ] Implement stable `work-items --json` including message ID and supported canonical path/context references.
