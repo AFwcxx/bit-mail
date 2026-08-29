@@ -1,6 +1,6 @@
 # M006 — Triage state, selections, and Knowledge
 
-**Status:** Planned  
+**Status:** Complete
 **Depends on:** M002, M004, M005 work-item creation  
 **Outcome:** Complete offline local decision workflow without provider mutation.
 
@@ -9,58 +9,69 @@
 - [x] Versioned work-item persistent schema created by M005 for reuse here.
 - [x] State enum exactly `pending | read | delete`, created by M005.
 - [x] M005 creates work items only for actionable unread Inbox messages.
-- [ ] Implement `work-items` human output.
-- [ ] Implement `work-items --state ...`.
-- [ ] Implement stable `work-items --json` including message ID and supported canonical path/context references.
+- [x] Implement `work-items` human output.
+- [x] Implement `work-items --state ...`.
+- [x] Implement stable `work-items --json` including message ID and supported canonical path/context references.
 
 ## Stage / unstage
 
-- [ ] Implement `stage <id...> read|delete`.
-- [ ] Implement `stage --stdin read|delete` one UUID per line.
-- [ ] Validate all bulk input before mutating any requested batch state.
-- [ ] Implement `unstage <id...>`.
-- [ ] Implement `unstage --stdin` if justified by consistent CLI design.
-- [ ] Support selection-based stage/unstage.
-- [ ] Require exact one-account resolution.
-- [ ] Record audit events.
+- [x] Implement `stage <id...> read|delete`.
+- [x] Implement `stage --stdin read|delete` one UUID per line.
+- [x] Validate all bulk input before mutating any requested batch state.
+- [x] Implement `unstage <id...>`.
+- [x] Skip `unstage --stdin`; explicit IDs and selections cover bulk unstage without adding undocumented syntax.
+- [x] Support selection-based stage/unstage.
+- [x] Require exact one-account resolution.
+- [x] Record audit events.
 
 ## Selections
 
-- [ ] Define account-scoped persistent selection schema.
-- [ ] `selection create/add/remove/show/delete` as required.
-- [ ] References only; no content copies.
-- [ ] Only actionable work-item messages may be members.
-- [ ] Automatically prune missing/resolved members.
-- [ ] Preserve empty selection until explicit deletion.
-- [ ] Stable `--json` outputs.
+- [x] Define account-scoped persistent selection schema.
+- [x] `selection create/add/remove/show/delete` as required.
+- [x] References only; no content copies.
+- [x] Only actionable work-item messages may be members.
+- [x] Automatically prune missing/resolved members.
+- [x] Preserve empty selection until explicit deletion.
+- [x] Stable `--json` outputs.
 
 ## Knowledge
 
-- [ ] Define one-Markdown-file-per-item schema/frontmatter.
-- [ ] UUIDv7 identity.
-- [ ] Repository-global scope.
-- [ ] Account-specific scope.
-- [ ] Implement `knowledge add/list/show/update/remove` as justified by CLI design.
-- [ ] Ensure mutation goes through CLI with correct global/account lock.
-- [ ] Audit Knowledge changes without leaking sensitive content into metadata-only audit; decide whether storing Knowledge ID/action only is sufficient.
-- [ ] Preserve Knowledge across cache rebuild.
+- [x] Define one-Markdown-file-per-item schema/frontmatter.
+- [x] UUIDv7 identity.
+- [x] Repository-global scope.
+- [x] Account-specific scope.
+- [x] Implement `knowledge add/list/show/update/remove` as justified by CLI design.
+- [x] Ensure mutation goes through CLI with correct global/account lock.
+- [x] Audit Knowledge ID/action/scope only; never store Knowledge content in audit.
+- [x] Preserve Knowledge across cache rebuild by keeping it outside disposable account cache state.
 
 ## Offline behavior
 
-- [ ] Ensure all work-item/selection/Knowledge actions require no provider access.
-- [ ] Ensure provider credentials are never required for offline triage.
+- [x] Ensure all work-item/selection/Knowledge actions require no provider access.
+- [x] Ensure provider credentials are never required for offline triage.
 
 ## Tests
 
-- [ ] State transition tests.
-- [ ] Bulk all-or-no-local-mutation-on-invalid-input tests.
-- [ ] Account-scope selection tests.
-- [ ] Selection pruning tests.
-- [ ] Global vs account Knowledge resolution tests.
-- [ ] Concurrent same-account mutations lock correctly.
-- [ ] Global Knowledge lock behavior.
+- [x] State transition tests.
+- [x] Bulk all-or-no-local-mutation-on-invalid-input tests.
+- [x] Account-scope selection tests.
+- [x] Selection pruning tests.
+- [x] Global vs account Knowledge resolution tests.
+- [x] Concurrent same-account mutations lock correctly.
+- [x] Global Knowledge lock behavior.
 
 ## Exit criteria
 
-- [ ] Human can perform complete local triage without AI or network.
-- [ ] AI harness has deterministic commands for every persistence/mutation action and no reason to edit managed files.
+- [x] Human can perform complete local triage without AI or network.
+- [x] AI harness has deterministic commands for every persistence/mutation action and no reason to edit managed files.
+
+## Progress log
+
+### 2026-08-30
+
+Implemented offline work-item listing and state transitions, account-scoped
+selections with automatic pruning, global/account Knowledge with UUIDv7 TOML
+frontmatter, metadata-only monthly audit JSONL, stable inspection JSON, and
+account/global lock enforcement. Reused the M005 work-item schema and existing
+repository/storage primitives; no provider access, new dependency, or SQLite
+schema was added. Formatting, strict Clippy, and all-target tests passed.

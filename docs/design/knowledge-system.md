@@ -22,9 +22,15 @@ There is no machine-global Knowledge in v1.
 
 ## Persistence
 
-One Markdown file per Knowledge item. Each item has stable UUIDv7 identity and deterministic metadata/frontmatter.
+One `<uuid-v7>.md` file per Knowledge item. Deterministic TOML frontmatter stores
+schema version, UUID, `global` or `account` scope, optional account UUID, and
+creation/update Unix-millisecond timestamps. The remaining UTF-8 Markdown body
+is normalized to one final newline.
 
 The filesystem is canonical. AI may read Knowledge directly but must mutate it only through `bit-mail knowledge ...`.
+
+Mutation audit records contain only the Knowledge UUID, action, and scope; they
+never copy the Markdown body.
 
 ## Approval rule
 

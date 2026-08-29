@@ -233,7 +233,12 @@ Selections are named account-local working sets of actionable message IDs.
 bit-mail selection create promotions
 bit-mail selection add promotions <id1> <id2> <id3>
 bit-mail selection show promotions
+bit-mail selection show promotions --json
+bit-mail selection remove promotions <id1> <id2>
+bit-mail selection delete promotions
 ```
+
+`--json` is available for every selection subcommand.
 
 Stage a selection:
 
@@ -269,9 +274,16 @@ Inspection:
 ```bash
 bit-mail knowledge list
 bit-mail knowledge list --json
+bit-mail knowledge show <knowledge-id>
+bit-mail knowledge update <knowledge-id> "Updated preference."
+bit-mail knowledge remove <knowledge-id>
 ```
 
-Knowledge is one Markdown file per item with stable UUID identity. AI may suggest a preference, but persistent Knowledge requires explicit user approval. Ambiguous scope must be clarified.
+Knowledge is one Markdown file per item with stable UUIDv7 identity and TOML
+frontmatter. Without `--account`, Knowledge commands target repository-global
+Knowledge. Explicit `--account` targets account-specific mutations; account
+listing and showing also resolve applicable global Knowledge. AI may suggest a
+preference, but persistent Knowledge requires explicit user approval.
 
 ## 10. Attachments
 

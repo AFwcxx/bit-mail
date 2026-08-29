@@ -35,6 +35,100 @@ pub enum Command {
     Attachment(AttachmentArgs),
     /// Fetch optional raw message source.
     Raw(RawArgs),
+    /// List actionable local work items.
+    WorkItems(WorkItemsArgs),
+    /// Stage local read/delete intent.
+    Stage(StageArgs),
+    /// Return staged local intent to pending.
+    Unstage(UnstageArgs),
+    /// Manage account-scoped selections.
+    Selection(SelectionArgs),
+    /// Manage approved repository Knowledge.
+    Knowledge(KnowledgeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WorkItemsArgs {
+    #[arg(long)]
+    pub state: Option<crate::triage::WorkState>,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct StageArgs {
+    #[arg(value_name = "ID... ACTION", required = true)]
+    pub values: Vec<String>,
+    #[arg(long, conflicts_with = "selection")]
+    pub stdin: bool,
+    #[arg(long, value_name = "NAME", conflicts_with = "stdin")]
+    pub selection: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct UnstageArgs {
+    #[arg(required_unless_present = "selection", conflicts_with = "selection")]
+    pub ids: Vec<uuid::Uuid>,
+    #[arg(long, value_name = "NAME")]
+    pub selection: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SelectionArgs {
+    #[arg(long, global = true)]
+    pub json: bool,
+    #[command(subcommand)]
+    pub command: SelectionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SelectionCommand {
+    Create {
+        name: String,
+    },
+    Add {
+        name: String,
+        #[arg(required = true)]
+        ids: Vec<uuid::Uuid>,
+    },
+    Remove {
+        name: String,
+        #[arg(required = true)]
+        ids: Vec<uuid::Uuid>,
+    },
+    Show {
+        name: String,
+    },
+    Delete {
+        name: String,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct KnowledgeArgs {
+    #[command(subcommand)]
+    pub command: KnowledgeCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KnowledgeCommand {
+    Add {
+        content: String,
+    },
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Show {
+        id: uuid::Uuid,
+    },
+    Update {
+        id: uuid::Uuid,
+        content: String,
+    },
+    Remove {
+        id: uuid::Uuid,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -145,5 +239,20 @@ mod tests {
     fn connect_and_reauthorize_have_stable_cli_shapes() {
         assert!(Cli::try_parse_from(["bit-mail", "connect"]).is_ok());
         assert!(Cli::try_parse_from(["bit-mail", "connect", "--reauthorize", "personal"]).is_ok());
+    }
+
+    #[test]
+    fn offline_triage_commands_have_stable_cli_shapes() {
+        for arguments in [
+            vec!["bit-mail", "work-items", "--state", "pending", "--json"],
+            vec!["bit-mail", "stage", "--stdin", "delete"],
+            vec!["bit-mail", "stage", "--selection", "review", "read"],
+            vec!["bit-mail", "unstage", "--selection", "review"],
+            vec!["bit-mail", "selection", "show", "review", "--json"],
+            vec!["bit-mail", "knowledge", "list", "--json"],
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_ok());
+        }
+        Cli::command().debug_assert();
     }
 }

@@ -1,8 +1,11 @@
-use std::{env, process::ExitCode};
+use std::{env, io::Read, process::ExitCode, str::FromStr};
 
 use bit_mail::{
     Result,
-    cli::{AccountCommand, AttachmentCommand, Cli, Command, ConfigCommand, RawCommand},
+    cli::{
+        AccountCommand, AttachmentCommand, Cli, Command, ConfigCommand, KnowledgeCommand,
+        RawCommand, SelectionCommand,
+    },
     credentials::{GoogleCredentialRevoker, KeyringStore},
     pull::{AccountReport, PullReport},
     repository::{AccountConfig, GitIgnorePolicy, RemoveOptions, Repository},
@@ -237,9 +240,200 @@ fn run() -> Result<()> {
             })?;
             println!("{}", path.display());
         }
+        Some(Command::WorkItems(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let output = bit_mail::triage::work_items(&repository, &account, args.state)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                for item in output.work_items {
+                    println!(
+                        "{}\t{}\t{}",
+                        item.state,
+                        item.message_id,
+                        item.content_path.display()
+                    );
+                }
+            }
+        }
+        Some(Command::Stage(mut args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let action = args.values.pop().expect("clap requires an action");
+            let state =
+                bit_mail::triage::WorkState::from_str(&action).map_err(std::io::Error::other)?;
+            let changed = if let Some(selection) = args.selection {
+                if !args.values.is_empty() {
+                    return Err(std::io::Error::other(
+                        "message IDs cannot be used with --selection",
+                    )
+                    .into());
+                }
+                bit_mail::triage::stage_selection(&repository, &account, &selection, state)?
+            } else {
+                let ids = if args.stdin {
+                    if !args.values.is_empty() {
+                        return Err(std::io::Error::other(
+                            "message IDs cannot be used with --stdin",
+                        )
+                        .into());
+                    }
+                    stdin_ids()?
+                } else {
+                    args.values
+                        .iter()
+                        .map(|value| value.parse())
+                        .collect::<std::result::Result<Vec<_>, _>>()?
+                };
+                bit_mail::triage::stage(&repository, &account, &ids, state)?
+            };
+            println!("Staged {changed} work item(s) {state}");
+        }
+        Some(Command::Unstage(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let changed = match args.selection {
+                Some(name) => bit_mail::triage::unstage_selection(&repository, &account, &name)?,
+                None => bit_mail::triage::unstage(&repository, &account, &args.ids)?,
+            };
+            println!("Unstaged {changed} work item(s)");
+        }
+        Some(Command::Selection(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let json = args.json;
+            match args.command {
+                SelectionCommand::Create { name } => {
+                    let value = bit_mail::triage::create_selection(&repository, &account, &name)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&value)?);
+                    } else {
+                        println!("Created selection {name}");
+                    }
+                }
+                SelectionCommand::Add { name, ids } => {
+                    let value =
+                        bit_mail::triage::add_selection(&repository, &account, &name, &ids)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&value)?);
+                    } else {
+                        println!(
+                            "Selection {} has {} item(s)",
+                            value.name,
+                            value.message_ids.len()
+                        );
+                    }
+                }
+                SelectionCommand::Remove { name, ids } => {
+                    let value = bit_mail::triage::remove_selection_members(
+                        &repository,
+                        &account,
+                        &name,
+                        &ids,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&value)?);
+                    } else {
+                        println!(
+                            "Selection {} has {} item(s)",
+                            value.name,
+                            value.message_ids.len()
+                        );
+                    }
+                }
+                SelectionCommand::Show { name } => {
+                    let value = bit_mail::triage::show_selection(&repository, &account, &name)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&value)?);
+                    } else {
+                        for id in value.message_ids {
+                            println!("{id}");
+                        }
+                    }
+                }
+                SelectionCommand::Delete { name } => {
+                    let value = bit_mail::triage::delete_selection(&repository, &account, &name)?;
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "schema_version": value.schema_version,
+                                "account_id": value.account_id,
+                                "name": value.name,
+                                "deleted": true
+                            }))?
+                        );
+                    } else {
+                        println!("Deleted selection {name}");
+                    }
+                }
+            }
+        }
+        Some(Command::Knowledge(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = cli
+                .account
+                .as_deref()
+                .map(|alias| repository.account_by_alias(alias))
+                .transpose()?;
+            match args.command {
+                KnowledgeCommand::Add { content } => {
+                    let item = bit_mail::knowledge::add(&repository, account.as_ref(), &content)?;
+                    println!("Added Knowledge {}", item.id);
+                }
+                KnowledgeCommand::List { json } => {
+                    let output = bit_mail::knowledge::list(&repository, account.as_ref())?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else {
+                        for item in output.knowledge {
+                            println!("{}\t{}\t{}", item.id, item.scope, item.path.display());
+                        }
+                    }
+                }
+                KnowledgeCommand::Show { id } => {
+                    let item = bit_mail::knowledge::show(&repository, account.as_ref(), id)?;
+                    print!("{}", item.content.expect("show includes content"));
+                }
+                KnowledgeCommand::Update { id, content } => {
+                    bit_mail::knowledge::update(&repository, account.as_ref(), id, &content)?;
+                    println!("Updated Knowledge {id}");
+                }
+                KnowledgeCommand::Remove { id } => {
+                    bit_mail::knowledge::remove(&repository, account.as_ref(), id)?;
+                    println!("Removed Knowledge {id}");
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+fn resolve_account(repository: &Repository, explicit: Option<&str>) -> Result<AccountConfig> {
+    repository.resolve_account(
+        explicit,
+        &env::current_dir()?,
+        env::var("BIT_MAIL_ACCOUNT").ok().as_deref(),
+    )
+}
+
+fn stdin_ids() -> Result<Vec<uuid::Uuid>> {
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+    let mut ids = Vec::new();
+    for (index, line) in input.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            return Err(std::io::Error::other(format!("stdin line {} is empty", index + 1)).into());
+        }
+        ids.push(line.parse()?);
+    }
+    if ids.is_empty() {
+        return Err(std::io::Error::other("stdin contained no message IDs").into());
+    }
+    Ok(ids)
 }
 
 #[cfg(test)]

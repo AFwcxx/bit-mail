@@ -629,6 +629,23 @@ impl CanonicalStore {
             .join(format!("{message_id}.eml"))
     }
 
+    pub fn message_path(&self, message_id: Uuid) -> PathBuf {
+        self.data_dir().join(message_id.to_string())
+    }
+
+    pub fn context_ids(&self, message_id: Uuid) -> Result<Vec<Uuid>> {
+        for path in sorted_files(&self.threads_dir())? {
+            let manifest: ThreadManifest = read_json(&path)?;
+            require_version(manifest.schema_version, "thread manifest")?;
+            if manifest.messages.contains(&message_id) {
+                return Ok(manifest.messages);
+            }
+        }
+        Err(error(format!(
+            "message has no thread context: {message_id}"
+        )))
+    }
+
     pub(crate) fn persist_raw_unlocked(&self, message_id: Uuid, bytes: &[u8]) -> Result<PathBuf> {
         self.provider_message_id(message_id)?;
         let path = self.raw_path(message_id);

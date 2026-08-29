@@ -1,6 +1,6 @@
 mod common;
 
-use std::fs;
+use std::{fs, io::Write, process::Stdio};
 
 use bit_mail::repository::{NewAccount, Repository};
 
@@ -161,5 +161,54 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
     assert_eq!(
         fs::read_to_string(knowledge_dir.join("preference.md")).expect("preserved Knowledge"),
         "keep me"
+    );
+}
+
+#[test]
+fn invalid_stdin_batch_changes_no_offline_work_items() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let repository = Repository::initialize(
+        directory.path(),
+        bit_mail::repository::GitIgnorePolicy::Never,
+    )
+    .expect("repository");
+    let account = repository
+        .create_account(NewAccount {
+            alias: "personal",
+            provider: "gmail",
+            provider_identity: Some("person@example.com"),
+            credential_profile: None,
+        })
+        .expect("account");
+    let id = uuid::Uuid::now_v7();
+    let work_items = directory
+        .path()
+        .join(".bit-mail/accounts")
+        .join(account.id.to_string())
+        .join("work-items");
+    fs::create_dir_all(&work_items).unwrap();
+    let path = work_items.join(format!("{id}.json"));
+    fs::write(
+        &path,
+        format!("{{\"schema_version\":1,\"message_id\":\"{id}\",\"state\":\"pending\"}}"),
+    )
+    .unwrap();
+
+    let mut child = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["stage", "--stdin", "read"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("stage must start without credentials");
+    writeln!(child.stdin.take().unwrap(), "{id}\nnot-a-uuid").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        fs::read_to_string(path)
+            .unwrap()
+            .contains("\"state\":\"pending\"")
     );
 }

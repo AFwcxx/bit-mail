@@ -12,11 +12,14 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(test)]
+use crate::triage::{WorkItem, WorkState};
 use crate::{
     Result,
     provider::{MailProvider, MessageState, ProviderError, ProviderErrorKind},
     repository::{AccountConfig, Repository},
     storage::{AttachmentState, CanonicalStore},
+    triage,
 };
 
 const SCHEMA_VERSION: u32 = 1;
@@ -87,22 +90,6 @@ struct ProviderState {
     last_successful_pull_ms: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkItem {
-    schema_version: u32,
-    message_id: Uuid,
-    state: WorkState,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum WorkState {
-    Pending,
-    Read,
-    Delete,
-}
-
 pub fn pull_account<F>(
     repository: &Repository,
     account: &AccountConfig,
@@ -115,7 +102,7 @@ where
     let _lock = repository.account_lock(account.id)?;
     let paths = Paths::new(repository, account.id);
     create_private_dir(&paths.work_items)?;
-    if staged(&paths.work_items)? {
+    if triage::staged(repository, account.id)? {
         let mut result = report(account, Outcome::Blocked);
         result.retries = Some(0);
         return Ok(result);
@@ -148,15 +135,17 @@ where
                             }
                             MessageState::Inactive => {
                                 if let Some(id) = store.message_id_for_provider(&changed.id)? {
-                                    removed +=
-                                        usize::from(remove_work_item(&paths.work_items, id)?);
+                                    removed += usize::from(triage::remove_work_item(
+                                        repository, account.id, id,
+                                    )?);
                                     thread_ids.insert(changed.thread_id);
                                 }
                             }
                             MessageState::Missing => {
                                 if let Some(id) = store.message_id_for_provider(&changed.id)? {
-                                    removed +=
-                                        usize::from(remove_work_item(&paths.work_items, id)?);
+                                    removed += usize::from(triage::remove_work_item(
+                                        repository, account.id, id,
+                                    )?);
                                 }
                             }
                         }
@@ -227,7 +216,8 @@ where
                         active.insert(id);
                         result.additional_unread +=
                             usize::from(!seed_ids.contains(&message.provider_message_id));
-                        result.new_work_items += usize::from(write_pending(&paths.work_items, id)?);
+                        result.new_work_items +=
+                            usize::from(triage::write_pending(repository, account.id, id)?);
                     }
                 }
             }
@@ -235,7 +225,7 @@ where
         }
     }
     if fallback && result.failures == 0 {
-        result.removed_work_items += prune_pending(&paths.work_items, &active)?;
+        result.removed_work_items += triage::prune_pending(repository, account.id, &active)?;
     }
     result.retries = Some(provider.retries());
     result.history_fallback = fallback;
@@ -368,60 +358,6 @@ fn read_state(path: &Path) -> Result<ProviderState> {
         return Err(io::Error::other("unsupported provider state schema").into());
     }
     Ok(state)
-}
-fn work_items(path: &Path) -> Result<Vec<(PathBuf, WorkItem)>> {
-    let mut values = Vec::new();
-    if !path.is_dir() {
-        return Ok(values);
-    }
-    for entry in fs::read_dir(path)? {
-        let path = entry?.path();
-        if path.extension().and_then(|v| v.to_str()) == Some("json") {
-            let item: WorkItem = serde_json::from_slice(&fs::read(&path)?)?;
-            if item.schema_version != SCHEMA_VERSION {
-                return Err(io::Error::other("unsupported work-item schema").into());
-            }
-            values.push((path, item));
-        }
-    }
-    Ok(values)
-}
-fn staged(path: &Path) -> Result<bool> {
-    Ok(work_items(path)?
-        .iter()
-        .any(|(_, v)| v.state != WorkState::Pending))
-}
-fn write_pending(path: &Path, id: Uuid) -> Result<bool> {
-    let target = path.join(format!("{id}.json"));
-    if target.exists() {
-        return Ok(false);
-    }
-    write_json_atomic(
-        &target,
-        &WorkItem {
-            schema_version: SCHEMA_VERSION,
-            message_id: id,
-            state: WorkState::Pending,
-        },
-    )?;
-    Ok(true)
-}
-fn remove_work_item(path: &Path, id: Uuid) -> Result<bool> {
-    match fs::remove_file(path.join(format!("{id}.json"))) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-    }
-}
-fn prune_pending(path: &Path, active: &HashSet<Uuid>) -> Result<usize> {
-    let mut removed = 0;
-    for (file, item) in work_items(path)? {
-        if item.state == WorkState::Pending && !active.contains(&item.message_id) {
-            fs::remove_file(file)?;
-            removed += 1;
-        }
-    }
-    Ok(removed)
 }
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
     let temporary = path.with_extension("json.tmp");

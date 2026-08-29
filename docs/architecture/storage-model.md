@@ -80,6 +80,13 @@ pending | read | delete
 
 Only unread Inbox messages receive work items.
 
+## Selections
+
+Each account-scoped selection is one versioned JSON file containing the account
+UUID, validated selection name, and a sorted set of actionable message UUID
+references. Work-item removal prunes matching references while preserving the
+empty selection.
+
 ## Normalization
 
 Deterministic, preservation-oriented normalization produces UTF-8 `content.md`
