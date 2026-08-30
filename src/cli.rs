@@ -1,7 +1,12 @@
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "bit-mail", version, about = env!("CARGO_PKG_DESCRIPTION"))]
+#[command(
+    name = "bit-mail",
+    version,
+    about = env!("CARGO_PKG_DESCRIPTION"),
+    disable_help_subcommand = true
+)]
 pub struct Cli {
     /// Select an account by alias.
     #[arg(long, global = true)]
@@ -13,8 +18,18 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Show human or machine-readable CLI capabilities.
+    Help {
+        #[arg(long)]
+        json: bool,
+    },
     /// Initialize a runtime repository in the current directory.
     Init,
+    /// Report deterministic repository and account session context.
+    Context {
+        #[arg(long, required = true)]
+        json: bool,
+    },
     /// Establish the repository integrity baseline for a pre-M007 repository.
     MigrateIntegrity,
     /// Connect or reauthorize a Gmail account.
@@ -41,6 +56,14 @@ pub enum Command {
     Raw(RawArgs),
     /// List actionable local work items.
     WorkItems(WorkItemsArgs),
+    /// Render one canonical message or its complete thread context.
+    Show {
+        message_id: uuid::Uuid,
+        #[arg(long)]
+        context: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Stage local read/delete intent.
     Stage(StageArgs),
     /// Return staged local intent to pending.
@@ -112,25 +135,24 @@ pub struct SelectionArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum SelectionCommand {
-    Create {
-        name: String,
-    },
+    /// Create an empty account-scoped selection.
+    Create { name: String },
+    /// Add actionable messages to a selection.
     Add {
         name: String,
         #[arg(required = true)]
         ids: Vec<uuid::Uuid>,
     },
+    /// Remove messages from a selection.
     Remove {
         name: String,
         #[arg(required = true)]
         ids: Vec<uuid::Uuid>,
     },
-    Show {
-        name: String,
-    },
-    Delete {
-        name: String,
-    },
+    /// Show a selection and its current actionable members.
+    Show { name: String },
+    /// Delete a selection without changing its messages.
+    Delete { name: String },
 }
 
 #[derive(Debug, Args)]
@@ -141,23 +163,19 @@ pub struct KnowledgeArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum KnowledgeCommand {
-    Add {
-        content: String,
-    },
+    /// Add an approved Knowledge item.
+    Add { content: String },
+    /// List approved Knowledge items.
     List {
         #[arg(long)]
         json: bool,
     },
-    Show {
-        id: uuid::Uuid,
-    },
-    Update {
-        id: uuid::Uuid,
-        content: String,
-    },
-    Remove {
-        id: uuid::Uuid,
-    },
+    /// Show one approved Knowledge item.
+    Show { id: uuid::Uuid },
+    /// Replace an approved Knowledge item's content.
+    Update { id: uuid::Uuid, content: String },
+    /// Remove an approved Knowledge item.
+    Remove { id: uuid::Uuid },
 }
 
 #[derive(Debug, Args)]
@@ -199,6 +217,7 @@ pub struct AttachmentArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AttachmentCommand {
+    /// Fetch one remote attachment into canonical storage.
     Fetch {
         message_id: uuid::Uuid,
         part_id: String,
@@ -213,6 +232,7 @@ pub struct RawArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RawCommand {
+    /// Fetch optional raw source for one message.
     Fetch { message_id: uuid::Uuid },
 }
 
@@ -291,8 +311,12 @@ mod tests {
 
     #[test]
     fn offline_triage_commands_have_stable_cli_shapes() {
+        let id = uuid::Uuid::nil().to_string();
         for arguments in [
+            vec!["bit-mail", "help", "--json"],
+            vec!["bit-mail", "context", "--json"],
             vec!["bit-mail", "work-items", "--state", "pending", "--json"],
+            vec!["bit-mail", "show", &id, "--context", "--json"],
             vec!["bit-mail", "stage", "--stdin", "delete"],
             vec!["bit-mail", "stage", "--selection", "review", "read"],
             vec!["bit-mail", "unstage", "--selection", "review"],
@@ -301,6 +325,7 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(arguments).is_ok());
         }
+        assert!(Cli::try_parse_from(["bit-mail", "context"]).is_err());
         Cli::command().debug_assert();
     }
 

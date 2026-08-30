@@ -129,6 +129,8 @@ where
     C: FnMut(ReviewStage, &PushReport) -> Result<bool>,
 {
     let _lock = repository.account_lock(account.id)?;
+    repository.require_current_runtime_assets()?;
+    crate::integrity::prepare_repository(repository)?;
     let staged = scoped_items(repository, account, &options.scope)?;
     let ids = staged
         .iter()
@@ -715,6 +717,30 @@ mod tests {
         .unwrap();
         assert_eq!(report.outcome, PushOutcome::Preview);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
+        fs::write(repository.root().join("AGENTS.md"), "tampered").unwrap();
+        assert!(
+            push_account(
+                &repository,
+                &account,
+                PushOptions {
+                    scope: PushScope::Message(ids[0]),
+                    dry_run: false
+                },
+                || {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    unreachable!()
+                },
+                |_, _| Ok(true),
+            )
+            .is_err()
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        let agents = crate::runtime_assets::ASSETS
+            .iter()
+            .find(|(path, _)| *path == "AGENTS.md")
+            .unwrap()
+            .1;
+        fs::write(repository.root().join("AGENTS.md"), agents).unwrap();
         fs::write(
             repository
                 .data_dir(account.id)

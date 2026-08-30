@@ -14,12 +14,13 @@ repo-root/
 │   └── repository.toml
 ├── data/
 ├── knowledge/
-└── skills/
+├── skills/
+└── AGENTS.md
 ```
 
 `.bit-mail/` is the repository marker and framework-owned internal namespace.
-M002 creates the empty `skills/` destination. M009 installs the version-matched
-skill contents and `AGENTS.md` bootstrap.
+`bit-mail init` installs the binary-version-matched skill contents and
+`AGENTS.md` bootstrap without network access.
 
 ## Versioned repository files
 
@@ -28,7 +29,13 @@ skill contents and `AGENTS.md` bootstrap.
 ```toml
 schema_version = 2
 id = "<uuid-v4>"
+runtime_assets_version = "<bit-mail-version>"
 ```
+
+Repositories created before runtime assets were embedded may omit
+`runtime_assets_version`. Repository discovery installs a missing clean asset
+set or replaces an integrity-valid older set with the binary's embedded version.
+Legacy collisions and integrity mismatches fail without being overwritten.
 
 `.bit-mail/config.toml` contains mutable framework configuration:
 

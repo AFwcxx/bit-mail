@@ -17,6 +17,17 @@ fn help_is_available_without_provider_setup() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("Usage: bit-mail"));
+
+    let machine = common::bit_mail()
+        .args(["help", "--json"])
+        .output()
+        .expect("machine help must start");
+    assert!(machine.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&machine.stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert!(value["commands"].as_array().unwrap().iter().any(|command| {
+        command["path"] == serde_json::json!(["push"]) && command["may_mutate_provider"] == true
+    }));
 }
 
 #[test]
@@ -76,6 +87,17 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
             credential_profile: None,
         })
         .expect("work account");
+
+    let context = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["--account", "personal", "context", "--json"])
+        .output()
+        .expect("context must start");
+    assert!(context.status.success());
+    let context: serde_json::Value = serde_json::from_slice(&context.stdout).unwrap();
+    assert_eq!(context["account"]["id"], personal.id.to_string());
+    assert_eq!(context["pull_blocked"], false);
+    assert!(context.get("provider_identity").is_none());
 
     let accounts = common::bit_mail()
         .current_dir(directory.path())

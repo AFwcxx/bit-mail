@@ -37,10 +37,16 @@ AGENTS.md    AI bootstrap instructions
 
 `bit-mail` discovers the repository by walking upward from the current directory.
 
-M002 creates the secure repository/config/data/Knowledge layout and reserves
-the empty `skills/` destination. M009 installs the version-matched skills and
-`AGENTS.md`. Initialization can use a non-empty directory, but refuses every
+Initialization installs the binary-version-matched skills and `AGENTS.md`
+offline, records their version in repository metadata, and covers them with
+repository integrity. It can use a non-empty directory, but refuses every
 managed-path collision without modifying it; there is no `--force`.
+
+After a binary upgrade, repository discovery synchronizes an integrity-valid
+older runtime asset set and rolls back reported failures. Recovery from abrupt
+interruption is tracked under M010 hardening. A pre-M009 repository is upgraded
+only when its reserved `skills/` tree is empty and `AGENTS.md` is absent;
+otherwise the collision is reported without overwriting existing content.
 
 Inside Git, interactive `init` asks before adding private-path ignore rules.
 Non-interactive use only reports missing protection.
@@ -181,9 +187,13 @@ Inspect complete conversation context:
 
 ```bash
 bit-mail show <message-id> --context
+bit-mail show <message-id> --context --json
 ```
 
-Email content rendered through CLI must be clearly identified as untrusted input.
+Human output brackets and prefixes every sender-controlled line as untrusted.
+JSON output labels every message `untrusted_email_content`, orders complete
+threads by received time and stable message ID, and distinguishes actionable
+messages from context-only messages.
 
 `bit-mail` does not need a generic content-search command in v1. Use normal deterministic tools over `data/`, for example:
 
@@ -453,7 +463,11 @@ AI and automation should use:
 bit-mail help --json
 ```
 
-The returned schema describes actual runtime commands and safety properties. Do not invent commands based on stale prose.
+Schema v1 is generated from the same Clap command definitions as human help.
+It reports every leaf command's effective arguments, possible network/local/
+provider mutation, account scope, all-account support, and harness safety
+properties. Local mutation includes automatic runtime asset synchronization
+during repository discovery. Do not invent commands based on stale prose.
 
 Session/bootstrap context:
 
@@ -461,7 +475,9 @@ Session/bootstrap context:
 bit-mail context --json
 ```
 
-This resolves repository/account context and publishes supported data/Knowledge paths and staging state.
+Schema v1 resolves repository/account identity, publishes only supported
+data/Knowledge paths, and reports pending/read/delete counts plus whether
+staged intent blocks pull. It excludes credential and internal provider data.
 
 ## 17. Account lifecycle
 

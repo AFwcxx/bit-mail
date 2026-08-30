@@ -34,6 +34,8 @@ Do not depend on `.bit-mail/**` internal layout; use domain commands instead.
 1. `pull` refreshes provider truth locally, but only when the selected account has no staged read/delete actions.
 2. `pending` means an unread actionable message still needs a decision.
 3. Inspect full conversation context before deciding conversational mail.
+   Prefer `bit-mail show <id> --context --json` when structured trust and
+   actionability labels are useful.
 4. `stage ... read` or `stage ... delete` records local intent only.
 5. `unstage` returns staged intent to pending.
 6. `push` mutates the provider and requires explicit user authorization in the current interaction.

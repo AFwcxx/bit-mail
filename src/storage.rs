@@ -656,6 +656,16 @@ impl CanonicalStore {
         self.data_dir().join(message_id.to_string())
     }
 
+    pub fn message(&self, message_id: Uuid) -> Result<(CanonicalMetadata, String)> {
+        let directory = self.message_path(message_id);
+        let metadata: CanonicalMetadata = read_json(&directory.join("metadata.json"))?;
+        require_version(metadata.schema_version, "message metadata")?;
+        if metadata.id != message_id {
+            return Err(error("message metadata identity does not match its path"));
+        }
+        Ok((metadata, fs::read_to_string(directory.join("content.md"))?))
+    }
+
     pub fn context_ids(&self, message_id: Uuid) -> Result<Vec<Uuid>> {
         for path in sorted_files(&self.threads_dir())? {
             let manifest: ThreadManifest = read_json(&path)?;

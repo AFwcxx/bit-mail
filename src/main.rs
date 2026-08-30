@@ -53,6 +53,17 @@ fn run() -> Result<()> {
             Cli::command().print_help()?;
             println!();
         }
+        Some(Command::Help { json }) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&bit_mail::harness::capabilities()?)?
+                );
+            } else {
+                Cli::command().print_help()?;
+                println!();
+            }
+        }
         Some(Command::Init) => {
             let repository = Repository::initialize(&env::current_dir()?, GitIgnorePolicy::Prompt)?;
             println!(
@@ -61,6 +72,18 @@ fn run() -> Result<()> {
                 repository.root().display()
             );
         }
+        Some(Command::Context { json: true }) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&bit_mail::harness::session_context(
+                    &repository,
+                    &account
+                )?)?
+            );
+        }
+        Some(Command::Context { json: false }) => unreachable!("--json is required by clap"),
         Some(Command::MigrateIntegrity) => {
             let repository = Repository::discover_current()?;
             if repository.migrate_integrity()? {
@@ -306,6 +329,20 @@ fn run() -> Result<()> {
                         item.content_path.display()
                     );
                 }
+            }
+        }
+        Some(Command::Show {
+            message_id,
+            context,
+            json,
+        }) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let output = bit_mail::harness::show(&repository, &account, message_id, context)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                print!("{}", bit_mail::harness::render_show(&output)?);
             }
         }
         Some(Command::Stage(mut args)) => {

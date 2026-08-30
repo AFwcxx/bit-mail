@@ -37,6 +37,7 @@
 ## Recovery UX
 
 - [ ] Doctor recommendations point to deterministic commands: reauthorize, repair, index rebuild, cache rebuild, gc, permission remediation.
+- [ ] Detect interrupted runtime asset updates and restore the last integrity-valid asset set without manual managed-file editing.
 - [ ] No recommendation requires manual editing of managed JSON/TOML except explicit advanced recovery documentation.
 
 ## Exit criteria

@@ -14,13 +14,17 @@ use crate::Result;
 
 const REPOSITORY_SCHEMA_VERSION: u32 = 2;
 const FILE_SCHEMA_VERSION: u32 = 1;
+#[cfg(test)]
 const MANAGED_DIRS: [&str; 4] = ["data", "knowledge", "skills", ".bit-mail"];
+const MANAGED_PATHS: [&str; 5] = ["data", "knowledge", "skills", "AGENTS.md", ".bit-mail"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryMetadata {
     pub schema_version: u32,
     pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_assets_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +76,7 @@ pub enum GitIgnorePolicy {
 impl Repository {
     pub fn initialize(root: &Path, policy: GitIgnorePolicy) -> Result<Self> {
         let root = fs::canonicalize(root)?;
-        for name in MANAGED_DIRS {
+        for name in MANAGED_PATHS {
             if root.join(name).exists() {
                 return Err(message(format!(
                     "managed path already exists: {}",
@@ -94,12 +98,20 @@ impl Repository {
             create_private_dir(&staging.join("knowledge/global"))?;
             create_private_dir(&staging.join("knowledge/accounts"))?;
             create_private_dir(&staging.join("skills"))?;
+            for (path, bytes) in crate::runtime_assets::ASSETS {
+                let path = staging.join(path);
+                if let Some(parent) = path.parent() {
+                    create_private_dir(parent)?;
+                }
+                write_private(&path, bytes)?;
+            }
 
             write_toml(
                 &staging.join(".bit-mail/repository.toml"),
                 &RepositoryMetadata {
                     schema_version: REPOSITORY_SCHEMA_VERSION,
                     id,
+                    runtime_assets_version: Some(crate::runtime_assets::VERSION.to_owned()),
                 },
             )?;
             write_toml(&staging.join(".bit-mail/config.toml"), &Config::default())?;
@@ -140,7 +152,9 @@ impl Repository {
         };
         for root in start.ancestors() {
             if root.join(".bit-mail").is_dir() {
-                return Self::open(root.to_path_buf());
+                let mut repository = Self::open(root.to_path_buf())?;
+                repository.synchronize_runtime_assets()?;
+                return Ok(repository);
             }
         }
         Err(message(
@@ -166,6 +180,145 @@ impl Repository {
 
     pub fn id(&self) -> Uuid {
         self.metadata.id
+    }
+
+    pub fn runtime_assets_version(&self) -> Option<&str> {
+        self.metadata.runtime_assets_version.as_deref()
+    }
+
+    pub(crate) fn require_current_runtime_assets(&self) -> Result<()> {
+        if self.runtime_assets_version() == Some(crate::runtime_assets::VERSION) {
+            return Ok(());
+        }
+        Err(message(format!(
+            "runtime assets version does not match binary {}; reopen the repository to synchronize it",
+            crate::runtime_assets::VERSION
+        )))
+    }
+
+    fn synchronize_runtime_assets(&mut self) -> Result<()> {
+        if self.metadata.schema_version != REPOSITORY_SCHEMA_VERSION
+            || self.runtime_assets_version() == Some(crate::runtime_assets::VERSION)
+        {
+            return Ok(());
+        }
+
+        let _lifecycle = self.account_lifecycle_lock()?;
+        let current = Self::open(self.root.clone())?;
+        if current.runtime_assets_version() == Some(crate::runtime_assets::VERSION) {
+            *self = current;
+            return Ok(());
+        }
+        crate::integrity::prepare_repository(&current)?;
+        if current.runtime_assets_version().is_none()
+            && (current.root.join("AGENTS.md").exists()
+                || directory_has_files(&current.root.join("skills"))?)
+        {
+            return Err(message(
+                "legacy runtime asset collision; move the existing AGENTS.md/skills content before retrying",
+            ));
+        }
+
+        // ponytail: returned errors roll back; M010 adds recovery after abrupt interruption.
+        let transaction = current
+            .root
+            .join(".bit-mail")
+            .join(format!("runtime-assets-update-{}", Uuid::new_v4()));
+        let staged = transaction.join("new");
+        let backup = transaction.join("old");
+        create_private_dir(&staged.join("skills"))?;
+        create_private_dir(&backup)?;
+        let staged_result = (|| -> Result<()> {
+            for (path, bytes) in crate::runtime_assets::ASSETS {
+                if *path != "AGENTS.md" && !path.starts_with("skills/") {
+                    return Err(message(format!("unsupported runtime asset path: {path}")));
+                }
+                let target = staged.join(path);
+                create_private_dir(target.parent().expect("runtime asset parent"))?;
+                write_private(&target, bytes)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = staged_result {
+            let _ = fs::remove_dir_all(&transaction);
+            return Err(error);
+        }
+
+        let old_metadata = current.metadata.clone();
+        let mut moved_skills = false;
+        let mut moved_agents = false;
+        let mut published_skills = false;
+        let mut published_agents = false;
+        let publication = (|| -> Result<()> {
+            if current.root.join("skills").exists() {
+                fs::rename(current.root.join("skills"), backup.join("skills"))?;
+                moved_skills = true;
+            }
+            if current.root.join("AGENTS.md").exists() {
+                fs::rename(current.root.join("AGENTS.md"), backup.join("AGENTS.md"))?;
+                moved_agents = true;
+            }
+            fs::rename(staged.join("skills"), current.root.join("skills"))?;
+            published_skills = true;
+            fs::rename(staged.join("AGENTS.md"), current.root.join("AGENTS.md"))?;
+            published_agents = true;
+
+            let mut metadata = old_metadata.clone();
+            metadata.runtime_assets_version = Some(crate::runtime_assets::VERSION.to_owned());
+            write_toml_atomic(&current.root.join(".bit-mail/repository.toml"), &metadata)?;
+            crate::integrity::commit_repository(&current)
+        })();
+
+        if let Err(error) = publication {
+            let mut rollback = Vec::new();
+            if published_agents
+                && let Err(failure) = fs::remove_file(current.root.join("AGENTS.md"))
+            {
+                rollback.push(failure.to_string());
+            }
+            if published_skills
+                && let Err(failure) = fs::remove_dir_all(current.root.join("skills"))
+            {
+                rollback.push(failure.to_string());
+            }
+            if moved_agents
+                && let Err(failure) =
+                    fs::rename(backup.join("AGENTS.md"), current.root.join("AGENTS.md"))
+            {
+                rollback.push(failure.to_string());
+            }
+            if moved_skills
+                && let Err(failure) = fs::rename(backup.join("skills"), current.root.join("skills"))
+            {
+                rollback.push(failure.to_string());
+            }
+            if let Err(failure) = write_toml_atomic(
+                &current.root.join(".bit-mail/repository.toml"),
+                &old_metadata,
+            ) {
+                rollback.push(failure.to_string());
+            }
+            if let Err(failure) = crate::integrity::commit_repository(&current) {
+                rollback.push(failure.to_string());
+            }
+            let _ = fs::remove_dir_all(&transaction);
+            if rollback.is_empty() {
+                return Err(error);
+            }
+            return Err(message(format!(
+                "{error}; runtime asset rollback also failed: {}",
+                rollback.join(", ")
+            )));
+        }
+
+        if let Err(error) = fs::remove_dir_all(&transaction) {
+            eprintln!(
+                "warning: runtime assets synchronized, but cleanup failed for {}: {error}",
+                transaction.display()
+            );
+        }
+        *self = Self::open(self.root.clone())?;
+        Ok(())
     }
 
     pub(crate) fn require_integrity_ready(&self) -> Result<()> {
@@ -203,6 +356,7 @@ impl Repository {
             &RepositoryMetadata {
                 schema_version: REPOSITORY_SCHEMA_VERSION,
                 id: self.metadata.id,
+                runtime_assets_version: self.metadata.runtime_assets_version.clone(),
             },
         )?;
         let current = Self::open(self.root.clone())?;
@@ -271,7 +425,7 @@ impl Repository {
 
 fn publish_staged(root: &Path, staging: &Path) -> Result<()> {
     let mut moved: Vec<PathBuf> = Vec::new();
-    for name in MANAGED_DIRS {
+    for name in MANAGED_PATHS {
         let target = root.join(name);
         let publish = if target.exists() {
             Err(message(format!(
@@ -284,7 +438,12 @@ fn publish_staged(root: &Path, staging: &Path) -> Result<()> {
         if let Err(error) = publish {
             let mut rollback_failures = Vec::new();
             for path in moved.into_iter().rev() {
-                if let Err(rollback_error) = fs::remove_dir_all(&path) {
+                let rollback = if path.is_dir() {
+                    fs::remove_dir_all(&path)
+                } else {
+                    fs::remove_file(&path)
+                };
+                if let Err(rollback_error) = rollback {
                     rollback_failures.push(format!("{}: {rollback_error}", path.display()));
                 }
             }
@@ -299,6 +458,22 @@ fn publish_staged(root: &Path, staging: &Path) -> Result<()> {
         moved.push(target);
     }
     Ok(())
+}
+
+fn directory_has_files(path: &Path) -> Result<bool> {
+    if !path.is_dir() {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file()
+            || entry.file_type()?.is_symlink()
+            || entry.file_type()?.is_dir() && directory_has_files(&entry.path())?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn require_repository_version(version: u32) -> Result<()> {
@@ -918,6 +1093,121 @@ mod tests {
     }
 
     #[test]
+    fn init_installs_versioned_integrity_covered_runtime_assets() {
+        let (_directory, repository) = repository();
+        assert_eq!(
+            repository.runtime_assets_version(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        for (path, bytes) in crate::runtime_assets::ASSETS {
+            assert_eq!(fs::read(repository.root().join(path)).unwrap(), *bytes);
+        }
+        fs::write(repository.root().join("AGENTS.md"), "tampered").unwrap();
+        assert!(
+            crate::integrity::validate_full(&repository)
+                .unwrap()
+                .mismatches
+                .iter()
+                .any(|mismatch| mismatch.path.ends_with("AGENTS.md"))
+        );
+    }
+
+    #[test]
+    fn discovery_safely_synchronizes_legacy_and_older_runtime_assets() {
+        let (_directory, repository) = repository();
+        fs::remove_file(repository.root().join("AGENTS.md")).unwrap();
+        fs::remove_dir_all(repository.root().join("skills")).unwrap();
+        fs::create_dir(repository.root().join("skills")).unwrap();
+        let mut metadata = repository.metadata.clone();
+        metadata.runtime_assets_version = None;
+        write_toml_atomic(
+            &repository.root().join(".bit-mail/repository.toml"),
+            &metadata,
+        )
+        .unwrap();
+        crate::integrity::commit_repository(&repository).unwrap();
+
+        let synchronized = Repository::discover_from(repository.root()).unwrap();
+        assert_eq!(
+            synchronized.runtime_assets_version(),
+            Some(crate::runtime_assets::VERSION)
+        );
+        for (path, bytes) in crate::runtime_assets::ASSETS {
+            assert_eq!(fs::read(synchronized.root().join(path)).unwrap(), *bytes);
+        }
+
+        fs::write(synchronized.root().join("skills/obsolete.md"), "old").unwrap();
+        let mut metadata = synchronized.metadata.clone();
+        metadata.runtime_assets_version = Some("older".into());
+        write_toml_atomic(
+            &synchronized.root().join(".bit-mail/repository.toml"),
+            &metadata,
+        )
+        .unwrap();
+        crate::integrity::commit_repository(&synchronized).unwrap();
+        let upgraded = Repository::discover_from(synchronized.root()).unwrap();
+        assert!(!upgraded.root().join("skills/obsolete.md").exists());
+        assert!(
+            crate::integrity::validate_full(&upgraded)
+                .unwrap()
+                .mismatches
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn legacy_runtime_collision_and_tampered_upgrade_fail_unchanged() {
+        let (_directory, repository) = repository();
+        fs::remove_dir_all(repository.root().join("skills")).unwrap();
+        fs::create_dir(repository.root().join("skills")).unwrap();
+        fs::write(repository.root().join("AGENTS.md"), "user-owned").unwrap();
+        let mut metadata = repository.metadata.clone();
+        metadata.runtime_assets_version = None;
+        write_toml_atomic(
+            &repository.root().join(".bit-mail/repository.toml"),
+            &metadata,
+        )
+        .unwrap();
+        crate::integrity::commit_repository(&repository).unwrap();
+        assert!(Repository::discover_from(repository.root()).is_err());
+        assert_eq!(
+            fs::read_to_string(repository.root().join("AGENTS.md")).unwrap(),
+            "user-owned"
+        );
+
+        metadata.runtime_assets_version = Some("older".into());
+        write_toml_atomic(
+            &repository.root().join(".bit-mail/repository.toml"),
+            &metadata,
+        )
+        .unwrap();
+        crate::integrity::commit_repository(&repository).unwrap();
+        fs::write(repository.root().join("AGENTS.md"), "tampered").unwrap();
+        assert!(Repository::discover_from(repository.root()).is_err());
+        assert_eq!(
+            fs::read_to_string(repository.root().join("AGENTS.md")).unwrap(),
+            "tampered"
+        );
+    }
+
+    #[test]
+    fn init_rejects_an_existing_runtime_bootstrap_without_partial_state() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("AGENTS.md"), "user-owned").unwrap();
+        assert!(
+            Repository::initialize(directory.path(), GitIgnorePolicy::Never)
+                .unwrap_err()
+                .to_string()
+                .contains("managed path already exists")
+        );
+        assert!(!directory.path().join(".bit-mail").exists());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),
+            "user-owned"
+        );
+    }
+
+    #[test]
     fn init_rolls_back_if_publication_fails_before_the_repository_marker() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let staging = directory.path().join("staging");
@@ -1414,6 +1704,7 @@ mod tests {
         for path in [
             repository.root().join(".bit-mail/repository.toml"),
             repository.root().join(".bit-mail/config.toml"),
+            repository.root().join("AGENTS.md"),
             repository.account_dir(account.id).join("account.toml"),
             repository
                 .root()
@@ -1424,6 +1715,13 @@ mod tests {
                 .join(".bit-mail/locks/account-lifecycle.lock"),
         ] {
             assert_eq!(mode(&path), 0o600, "file: {}", path.display());
+        }
+        for (path, _) in crate::runtime_assets::ASSETS {
+            assert_eq!(
+                mode(&repository.root().join(path)),
+                0o600,
+                "runtime asset: {path}"
+            );
         }
 
         drop((account_lock, knowledge_lock, lifecycle_lock));
