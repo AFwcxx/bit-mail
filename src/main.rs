@@ -218,6 +218,40 @@ fn run() -> Result<()> {
                 println!("{}", repository.data_dir(account.id).display());
             }
         }
+        Some(Command::Status(args)) => {
+            let repository = Repository::discover_current()?;
+            if args.all_accounts && cli.account.is_some() {
+                return Err(
+                    std::io::Error::other("--account cannot be used with --all-accounts").into(),
+                );
+            }
+            let accounts = if args.all_accounts {
+                repository.accounts()?
+            } else {
+                vec![resolve_account(&repository, cli.account.as_deref())?]
+            };
+            for account in bit_mail::status::collect(&repository, accounts)? {
+                let backlog = account
+                    .backlog_remaining
+                    .map_or("unknown", |remaining| if remaining { "yes" } else { "no" });
+                let last_pull = account
+                    .last_successful_pull_ms
+                    .map_or_else(|| "-".into(), |value| value.to_string());
+                let last_push = account
+                    .last_successful_push_ms
+                    .map_or_else(|| "-".into(), |value| value.to_string());
+                println!(
+                    "{}\tpending={}\tread={}\tdelete={}\tbacklog={}\tlast_pull_ms={}\tlast_push_ms={}",
+                    account.alias,
+                    account.pending,
+                    account.read,
+                    account.delete,
+                    backlog,
+                    last_pull,
+                    last_push
+                );
+            }
+        }
         Some(Command::Pull(args)) => {
             let repository = Repository::discover_current()?;
             if args.all_accounts && cli.account.is_some() {

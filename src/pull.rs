@@ -92,6 +92,24 @@ struct ProviderState {
     last_successful_push_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderStatus {
+    pub backlog_remaining: Option<bool>,
+    pub last_successful_pull_ms: Option<u64>,
+    pub last_successful_push_ms: Option<u64>,
+}
+
+pub fn provider_status(repository: &Repository, account_id: Uuid) -> Result<ProviderStatus> {
+    let path = Paths::new(repository, account_id).provider_state;
+    let exists = path.exists();
+    let state = read_state(&path)?;
+    Ok(ProviderStatus {
+        backlog_remaining: exists.then_some(state.backlog_remaining),
+        last_successful_pull_ms: state.last_successful_pull_ms,
+        last_successful_push_ms: state.last_successful_push_ms,
+    })
+}
+
 pub fn pull_account<F>(
     repository: &Repository,
     account: &AccountConfig,
@@ -420,7 +438,7 @@ mod tests {
             TransferEncoding,
         },
     };
-    use std::{collections::BTreeMap, sync::Mutex};
+    use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 
     struct Fake {
         pages: Mutex<Vec<Option<String>>>,
@@ -732,6 +750,67 @@ mod tests {
         fn raw(&self, _: &str) -> Result<Vec<u8>> {
             unreachable!()
         }
+    }
+
+    struct ConcurrencyProbe {
+        current: AtomicUsize,
+        peak: AtomicUsize,
+    }
+
+    impl ConcurrencyProbe {
+        fn enter(&self) {
+            let current = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(current, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(10));
+            self.current.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    impl MailProvider for ConcurrencyProbe {
+        fn current_history_id(&self) -> Result<String> {
+            unreachable!()
+        }
+        fn unread_page(&self, _: Option<&str>, _: u32) -> Result<Page<MessageRef>> {
+            unreachable!()
+        }
+        fn history_page(&self, _: &str, _: Option<&str>) -> Result<HistoryPage> {
+            unreachable!()
+        }
+        fn message_state(&self, _: &str) -> Result<MessageState> {
+            unreachable!()
+        }
+        fn thread(&self, id: &str) -> Result<ThreadInput> {
+            self.enter();
+            Ok(ThreadInput {
+                provider: "gmail".into(),
+                provider_thread_id: id.into(),
+                messages: vec![Fake::message(id, id)],
+            })
+        }
+        fn attachment(&self, _: &str, _: &str) -> Result<Vec<u8>> {
+            unreachable!()
+        }
+        fn raw(&self, _: &str) -> Result<Vec<u8>> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn thread_fetch_concurrency_is_bounded_to_four() {
+        let provider = ConcurrencyProbe {
+            current: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+        };
+        let fetched = fetch_threads(
+            &provider,
+            (0..8).map(|index| format!("thread-{index}")).collect(),
+        );
+        assert!(fetched.into_iter().all(|result| result.is_ok()));
+        let peak = provider.peak.load(Ordering::SeqCst);
+        assert!(
+            (1..=4).contains(&peak),
+            "unexpected pull concurrency peak: {peak}"
+        );
     }
 
     fn pulled_repository() -> (tempfile::TempDir, Repository, AccountConfig, Uuid) {

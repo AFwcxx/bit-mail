@@ -52,6 +52,8 @@ pub enum Command {
     Account(AccountArgs),
     /// Print the selected account's data path.
     Path(AccountScopeArgs),
+    /// Show offline repository/account triage status.
+    Status(AccountScopeArgs),
     /// Pull provider truth into the local repository.
     Pull(PullArgs),
     /// Apply staged local intent to the selected provider account.
@@ -351,6 +353,7 @@ mod tests {
         for arguments in [
             vec!["bit-mail", "help", "--json"],
             vec!["bit-mail", "context", "--json"],
+            vec!["bit-mail", "status", "--all-accounts"],
             vec!["bit-mail", "work-items", "--state", "pending", "--json"],
             vec!["bit-mail", "show", &id, "--context", "--json"],
             vec!["bit-mail", "stage", "--stdin", "delete"],

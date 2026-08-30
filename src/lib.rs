@@ -18,6 +18,7 @@ pub mod push;
 pub mod recovery;
 pub mod repository;
 mod runtime_assets;
+pub mod status;
 pub mod storage;
 pub mod triage;
 

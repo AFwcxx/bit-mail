@@ -1309,6 +1309,63 @@ mod tests {
     }
 
     #[test]
+    fn rest_contract_covers_profile_seed_pagination_content_and_expired_history() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let responses = [
+                (
+                    "200 OK",
+                    r#"{"emailAddress":"test@example.com","historyId":"9"}"#,
+                ),
+                (
+                    "200 OK",
+                    r#"{"messages":[{"id":"a","threadId":"t"}],"nextPageToken":"older"}"#,
+                ),
+                ("200 OK", r#"{"messages":[{"id":"b","threadId":"u"}]}"#),
+                ("200 OK", r#"{"size":3,"data":"YWJj"}"#),
+                ("200 OK", r#"{"raw":"cmF3"}"#),
+                ("404 Not Found", ""),
+            ];
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut request)
+                    .unwrap();
+                requests.push(request);
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+            requests
+        });
+        let client = GmailClient::new("token", base).unwrap();
+        assert_eq!(client.current_history_id().unwrap(), "9");
+        let first = client.unread_page(None, 2).unwrap();
+        assert_eq!(first.items[0].id, "a");
+        let second = client.unread_page(first.next_page.as_deref(), 2).unwrap();
+        assert_eq!(second.items[0].id, "b");
+        assert_eq!(client.attachment("a", "remote").unwrap(), b"abc");
+        assert_eq!(client.raw("a").unwrap(), b"raw");
+        let expired = client.history_page("stale", None).unwrap_err();
+        assert_eq!(
+            expired.downcast_ref::<ProviderError>().map(|error| error.0),
+            Some(ProviderErrorKind::HistoryExpired)
+        );
+        let requests = server.join().unwrap();
+        assert!(requests[0].contains("/gmail/v1/users/me/profile"));
+        assert!(requests[2].contains("pageToken=older"));
+        assert!(requests[3].contains("messages/a/attachments/remote"));
+        assert!(requests[4].contains("messages/a?format=raw"));
+        assert!(requests[5].contains("history?startHistoryId=stale"));
+    }
+
+    #[test]
     fn gmail_push_uses_only_message_state_modify_and_trash_endpoints() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());

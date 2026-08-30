@@ -1,7 +1,11 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use rusqlite::{Connection, params};
@@ -764,6 +768,43 @@ impl CanonicalStore {
         Err(error(format!(
             "message has no thread context: {message_id}"
         )))
+    }
+
+    pub(crate) fn context_map(&self) -> Result<HashMap<Uuid, Arc<Vec<Uuid>>>> {
+        let paths = sorted_files(&self.threads_dir())?;
+        let next = AtomicUsize::new(0);
+        let results = Mutex::new(Vec::with_capacity(paths.len()));
+        std::thread::scope(|scope| {
+            for _ in 0..paths.len().min(4) {
+                scope.spawn(|| {
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = paths.get(index) else { break };
+                        let value = read_json::<ThreadManifest>(path).and_then(|manifest| {
+                            require_version(manifest.schema_version, "thread manifest")?;
+                            Ok(manifest)
+                        });
+                        results
+                            .lock()
+                            .expect("thread result lock")
+                            .push((index, value));
+                    }
+                });
+            }
+        });
+        let mut manifests = results.into_inner().expect("thread result lock");
+        manifests.sort_by_key(|(index, _)| *index);
+        let mut contexts = HashMap::new();
+        for (_, manifest) in manifests {
+            let manifest = manifest?;
+            let messages = Arc::new(manifest.messages);
+            for message_id in messages.iter() {
+                contexts
+                    .entry(*message_id)
+                    .or_insert_with(|| Arc::clone(&messages));
+            }
+        }
+        Ok(contexts)
     }
 
     pub(crate) fn persist_raw_unlocked(&self, message_id: Uuid, bytes: &[u8]) -> Result<PathBuf> {

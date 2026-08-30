@@ -101,6 +101,43 @@ fn doctor_reports_repository_health_without_network_or_accounts() {
 }
 
 #[test]
+fn status_reports_all_accounts_offline_in_alias_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = Repository::initialize(
+        directory.path(),
+        bit_mail::repository::GitIgnorePolicy::Never,
+    )
+    .unwrap();
+    for alias in ["zeta", "alpha"] {
+        repository
+            .create_account(NewAccount {
+                alias,
+                provider: "gmail",
+                provider_identity: None,
+                credential_profile: None,
+            })
+            .unwrap();
+    }
+    let output = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["status", "--all-accounts"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.starts_with("alpha\tpending=0\tread=0\tdelete=0\tbacklog=unknown"));
+    assert!(text.lines().nth(1).unwrap().starts_with("zeta\t"));
+
+    let conflict = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["--account", "alpha", "status", "--all-accounts"])
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("cannot be used"));
+}
+
+#[test]
 fn doctor_localizes_runtime_integrity_failure_without_overwriting_it() {
     let directory = tempfile::tempdir().expect("temporary directory");
     assert!(

@@ -7,6 +7,9 @@ description = "Local-first, Git-inspired email triage framework"
 repository = "https://github.com/AFwcxx/bit-mail"
 publish = false
 
+[features]
+live-gmail-tests = []
+
 [dependencies]
 base64 = "0.22"
 blake3 = "1"
@@ -28,5 +31,10 @@ uuid = { version = "1", features = ["serde", "v4", "v7"] }
 
 [dev-dependencies]
 blake3 = { version = "1", features = ["rayon"] }
+criterion = "0.8.2"
 memmap2 = "0.9"
 tempfile = "3"
+
+[[bench]]
+name = "m011"
+harness = false

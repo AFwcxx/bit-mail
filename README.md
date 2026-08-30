@@ -6,7 +6,9 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-The requirements baseline through diagnostics and hardening is complete. Testing and performance is next; progress is tracked under [`docs/milestones/`](docs/milestones/README.md).
+The requirements baseline through testing and performance is complete. v0.1
+release readiness is next; progress is tracked under
+[`docs/milestones/`](docs/milestones/README.md).
 
 ## Core workflow
 
@@ -35,7 +37,7 @@ bit-mail unstage <message-id>
 bit-mail push
 ```
 
-These commands are requirements, not an assertion that they are already implemented.
+This core workflow is implemented; v0.1 release packaging and final polish remain.
 
 ## Architectural invariants
 

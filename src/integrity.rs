@@ -975,6 +975,31 @@ mod tests {
     }
 
     #[test]
+    fn canonical_merkle_encoding_is_independent_of_input_order() {
+        let mut entries = vec![
+            Entry {
+                path: "data/account/messages/b/content.md".into(),
+                digest: "bb".into(),
+            },
+            Entry {
+                path: "data/account/messages/a/metadata.json".into(),
+                digest: "aa".into(),
+            },
+            Entry {
+                path: ".bit-mail/accounts/account/work-items/a.json".into(),
+                digest: "cc".into(),
+            },
+        ];
+        let first = scope_digest("bit-mail:account:v1", &entries);
+        entries.reverse();
+        let second = scope_digest("bit-mail:account:v1", &entries);
+        assert_eq!(
+            first, second,
+            "canonical Merkle framing must ignore discovery order"
+        );
+    }
+
+    #[test]
     fn sensitive_scope_localizes_tampered_message_content() {
         let directory = tempfile::tempdir().unwrap();
         let repository = Repository::initialize(directory.path(), GitIgnorePolicy::Never).unwrap();

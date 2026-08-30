@@ -169,6 +169,11 @@ Expected terminology:
 - last pull;
 - last successful push.
 
+`status` is offline and read-only. It prints one deterministic tab-separated
+line per selected account; missing provider history is reported as an unknown
+backlog and `-` timestamps. Use `context --json` for the stable automation
+contract.
+
 Actionable work items:
 
 ```bash

@@ -401,7 +401,7 @@ fn outcome_label(outcome: ItemOutcome) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::BTreeMap, fs, sync::atomic::AtomicUsize};
+    use std::{collections::BTreeMap, fs, sync::atomic::AtomicUsize, time::Duration};
 
     use crate::{
         provider::{HistoryPage, MessageRef, MessageState, Page},
@@ -519,6 +519,75 @@ mod tests {
 
     fn state(unread: bool, trash: bool) -> PushMessageState {
         PushMessageState { unread, trash }
+    }
+
+    struct ConcurrencyProbe {
+        current: AtomicUsize,
+        peak: AtomicUsize,
+    }
+
+    impl MailProvider for ConcurrencyProbe {
+        fn current_history_id(&self) -> Result<String> {
+            unreachable!()
+        }
+        fn unread_page(&self, _: Option<&str>, _: u32) -> Result<Page<MessageRef>> {
+            unreachable!()
+        }
+        fn history_page(&self, _: &str, _: Option<&str>) -> Result<HistoryPage> {
+            unreachable!()
+        }
+        fn message_state(&self, _: &str) -> Result<MessageState> {
+            unreachable!()
+        }
+        fn thread(&self, _: &str) -> Result<ThreadInput> {
+            unreachable!()
+        }
+        fn attachment(&self, _: &str, _: &str) -> Result<Vec<u8>> {
+            unreachable!()
+        }
+        fn raw(&self, _: &str) -> Result<Vec<u8>> {
+            unreachable!()
+        }
+        fn push_state(&self, _: &str) -> Result<Option<PushMessageState>> {
+            let current = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(current, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(10));
+            self.current.fetch_sub(1, Ordering::SeqCst);
+            Ok(Some(state(true, false)))
+        }
+        fn mark_read(&self, _: &str) -> Result<PushMessageState> {
+            Ok(state(false, false))
+        }
+    }
+
+    #[test]
+    fn push_concurrency_is_parallel_and_bounded_to_four() {
+        let provider = ConcurrencyProbe {
+            current: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+        };
+        let mut items = (0..8)
+            .map(|index| PushItem {
+                message_id: Uuid::now_v7(),
+                action: PushAction::Read,
+                threaded_delete: false,
+                outcome: ItemOutcome::Planned,
+                failure_kind: None,
+                provider_id: format!("message-{index}"),
+                context_ids: vec![],
+            })
+            .collect::<Vec<_>>();
+        execute(&provider, &mut items);
+        assert!(
+            items
+                .iter()
+                .all(|item| item.outcome == ItemOutcome::Mutated)
+        );
+        let peak = provider.peak.load(Ordering::SeqCst);
+        assert!(
+            (2..=4).contains(&peak),
+            "unexpected push concurrency peak: {peak}"
+        );
     }
 
     #[test]

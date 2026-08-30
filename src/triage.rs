@@ -3,6 +3,10 @@ use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use serde::{Deserialize, Serialize};
@@ -80,6 +84,25 @@ pub struct WorkItemsOutput {
     pub work_items: Vec<WorkItemView>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkItemCounts {
+    pub pending: usize,
+    pub read: usize,
+    pub delete: usize,
+}
+
+pub fn work_item_counts(repository: &Repository, account_id: Uuid) -> Result<WorkItemCounts> {
+    let mut counts = WorkItemCounts::default();
+    for (_, item) in read_work_items(&work_items_dir(repository, account_id))? {
+        match item.state {
+            WorkState::Pending => counts.pending += 1,
+            WorkState::Read => counts.read += 1,
+            WorkState::Delete => counts.delete += 1,
+        }
+    }
+    Ok(counts)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Selection {
@@ -101,15 +124,23 @@ pub fn work_items(
     filter: Option<WorkState>,
 ) -> Result<WorkItemsOutput> {
     let store = CanonicalStore::new(repository, account)?;
+    let contexts = store.context_map()?;
     let mut views = Vec::new();
     for (_, item) in read_work_items(&work_items_dir(repository, account.id))? {
         if filter.is_some_and(|state| state != item.state) {
             continue;
         }
         let message_path = store.message_path(item.message_id);
-        let context = store
-            .context_ids(item.message_id)?
-            .into_iter()
+        let context = contexts
+            .get(&item.message_id)
+            .ok_or_else(|| {
+                error(format!(
+                    "message has no thread context: {}",
+                    item.message_id
+                ))
+            })?
+            .iter()
+            .copied()
             .map(|message_id| {
                 let path = store.message_path(message_id);
                 MessageReference {
@@ -533,21 +564,36 @@ fn read_work_items(directory: &Path) -> Result<Vec<(PathBuf, WorkItem)>> {
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     paths.sort();
-    paths
-        .into_iter()
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
-        .map(|path| {
-            let item: WorkItem = serde_json::from_slice(&fs::read(&path)?)?;
-            let id = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .and_then(|value| value.parse::<Uuid>().ok());
-            if item.schema_version != SCHEMA_VERSION || id != Some(item.message_id) {
-                return Err(error("invalid work-item schema or identity"));
-            }
-            Ok((path, item))
-        })
-        .collect()
+    paths.retain(|path| path.extension().and_then(|value| value.to_str()) == Some("json"));
+    let next = AtomicUsize::new(0);
+    let results = Mutex::new(Vec::with_capacity(paths.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..paths.len().min(4) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = paths.get(index) else { break };
+                    let value = (index, read_work_item_path(path));
+                    results.lock().expect("work-item result lock").push(value);
+                }
+            });
+        }
+    });
+    let mut values = results.into_inner().expect("work-item result lock");
+    values.sort_by_key(|(index, _)| *index);
+    values.into_iter().map(|(_, item)| item).collect()
+}
+
+fn read_work_item_path(path: &Path) -> Result<(PathBuf, WorkItem)> {
+    let item: WorkItem = serde_json::from_slice(&fs::read(path)?)?;
+    let id = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .and_then(|value| value.parse::<Uuid>().ok());
+    if item.schema_version != SCHEMA_VERSION || id != Some(item.message_id) {
+        return Err(error("invalid work-item schema or identity"));
+    }
+    Ok((path.to_path_buf(), item))
 }
 
 fn read_selection(repository: &Repository, account_id: Uuid, name: &str) -> Result<Selection> {
