@@ -3,8 +3,7 @@
 ## Toolchain
 
 - Rust 2024 edition.
-- Current stable Rust during initial development.
-- Formal MSRV chosen at v0.1 release.
+- Rust 1.88 minimum; current stable is recommended for development.
 
 The repository includes `rust-toolchain.toml` using the `stable` channel with `rustfmt` and `clippy` components.
 
@@ -20,6 +19,7 @@ Baseline commands:
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+cargo +1.88.0 check --locked --all-targets --all-features
 ```
 
 Provider contract tests must not require real Gmail credentials. Live Gmail tests are explicit/ignored/opt-in.

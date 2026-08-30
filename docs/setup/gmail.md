@@ -1,6 +1,9 @@
 # Gmail setup
 
-These steps match the Google Auth Platform UI documented in August 2026.
+These steps were verified on 2026-08-31 against Google's current
+[Gmail quickstart](https://developers.google.com/workspace/gmail/api/quickstart/python),
+[desktop OAuth flow](https://developers.google.com/identity/protocols/oauth2/native-app),
+and [scope reference](https://developers.google.com/workspace/gmail/api/auth/scopes).
 
 ## Google Cloud setup
 
@@ -11,6 +14,9 @@ These steps match the Google Auth Platform UI documented in August 2026.
    only when every mailbox belongs to the same Google Workspace organization.
 4. Add only `https://www.googleapis.com/auth/gmail.modify` under Data Access.
 5. Open **Clients**, create a **Desktop app**, and download its JSON file.
+
+Desktop clients use a random loopback `127.0.0.1` redirect. Google's deprecated
+manual copy/paste flow is not used.
 
 External apps in Testing receive authorizations that expire after seven days
 when restricted Gmail scopes are requested. Use an appropriate production

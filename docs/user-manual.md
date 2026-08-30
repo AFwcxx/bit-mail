@@ -1,6 +1,7 @@
 # bit-mail user manual
 
-> **Status:** This manual describes the intended v1 CLI contract. During implementation, each milestone must update this file so it never intentionally describes behavior that has been removed or renamed.
+> **Status:** This manual describes the implemented v0.1 CLI contract and was
+> reviewed against `bit-mail help --json` schema 1 for the v0.1.0 release.
 
 ## 1. Mental model
 
@@ -69,6 +70,15 @@ The interactive flow is intended to:
 8. create the account configuration and local state.
 
 No OAuth secret is stored in mailbox data or repository config.
+
+Reauthorize an existing account after credentials expire or on a new machine:
+
+```bash
+bit-mail connect --reauthorize <alias>
+```
+
+The authorization must resolve to the same Gmail mailbox. Repository data stays
+usable offline while provider-facing commands require reauthorization.
 
 ## 4. Account selection
 

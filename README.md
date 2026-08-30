@@ -6,9 +6,26 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-The requirements baseline through testing and performance is complete. v0.1
-release readiness is next; progress is tracked under
-[`docs/milestones/`](docs/milestones/README.md).
+The v0.1 implementation is release-ready. Progress and release verification are
+tracked under [`docs/milestones/`](docs/milestones/README.md).
+
+## Install and quick start
+
+Download the archive for your platform plus `SHA256SUMS` from the
+[GitHub Releases](https://github.com/AFwcxx/bit-mail/releases), or install from
+the tagged source with Rust 1.88 or newer:
+
+```bash
+cargo install --locked --git https://github.com/AFwcxx/bit-mail --tag v0.1.0 bit-mail
+mkdir ~/mail-triage
+cd ~/mail-triage
+bit-mail init
+bit-mail connect
+bit-mail pull
+```
+
+Continue with [`docs/user-manual.md`](docs/user-manual.md); Gmail OAuth setup is
+documented in [`docs/setup/gmail.md`](docs/setup/gmail.md).
 
 ## Core workflow
 
@@ -82,13 +99,14 @@ Start here:
 - [`docs/design/knowledge-system.md`](docs/design/knowledge-system.md) — repository-global and account-scoped Knowledge.
 - [`docs/security/threat-model.md`](docs/security/threat-model.md) — security assumptions and trust boundaries.
 - [`docs/setup/gmail.md`](docs/setup/gmail.md) — Gmail OAuth setup model.
+- [`docs/release.md`](docs/release.md) — supported artifacts, versions, and verification.
 - [`docs/milestones/README.md`](docs/milestones/README.md) — implementation roadmap and progress.
 
 ## Platform and release target
 
-v1 targets Linux and macOS, Rust 2024 edition, and current stable Rust during initial development. The first formal MSRV will be established at the v0.1 release boundary.
+v0.1 targets Linux and macOS, Rust 2024 edition, and Rust 1.88 or newer.
 
-Planned distribution is deliberately simple: GitHub Release binaries plus normal Cargo source installation.
+Distribution is deliberately simple: GitHub Release binaries plus Cargo source installation.
 
 ## License
 
