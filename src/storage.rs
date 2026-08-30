@@ -240,10 +240,26 @@ impl CanonicalStore {
 
     pub fn materialize_thread(&self, thread: &ThreadInput) -> Result<Vec<Uuid>> {
         let _lock = self.account_lock()?;
-        self.materialize_thread_unlocked(thread)
+        let repository = Repository::open(self.root.clone())?;
+        crate::integrity::prepare_account(&repository, self.account_id)?;
+        let ids = self.materialize_thread_unlocked(thread)?;
+        crate::integrity::commit_account(&repository, self.account_id)?;
+        Ok(ids)
     }
 
     pub(crate) fn materialize_thread_unlocked(&self, thread: &ThreadInput) -> Result<Vec<Uuid>> {
+        self.materialize_thread_with_cache(thread, true)
+    }
+
+    pub(crate) fn replace_thread_unlocked(&self, thread: &ThreadInput) -> Result<Vec<Uuid>> {
+        self.materialize_thread_with_cache(thread, false)
+    }
+
+    fn materialize_thread_with_cache(
+        &self,
+        thread: &ThreadInput,
+        preserve_cached_attachments: bool,
+    ) -> Result<Vec<Uuid>> {
         if thread.provider != self.provider {
             return Err(error("thread provider does not match account provider"));
         }
@@ -261,6 +277,9 @@ impl CanonicalStore {
         }
 
         for (id, normalized) in ids.iter().zip(&mut normalized) {
+            if !preserve_cached_attachments {
+                continue;
+            }
             let existing_dir = self.data_dir().join(id.to_string());
             let metadata_path = existing_dir.join("metadata.json");
             if !metadata_path.exists() {
@@ -401,7 +420,7 @@ impl CanonicalStore {
         self.rebuild_index_unlocked()
     }
 
-    fn rebuild_index_unlocked(&self) -> Result<()> {
+    pub(crate) fn rebuild_index_unlocked(&self) -> Result<()> {
         self.create_layout()?;
         let target = self.account_dir().join("index.sqlite");
         let temporary = self
@@ -553,7 +572,11 @@ impl CanonicalStore {
         bytes: &[u8],
     ) -> Result<PathBuf> {
         let _lock = self.account_lock()?;
-        self.persist_attachment_unlocked(message_id, part_id, bytes)
+        let repository = Repository::open(self.root.clone())?;
+        crate::integrity::prepare_account(&repository, self.account_id)?;
+        let path = self.persist_attachment_unlocked(message_id, part_id, bytes)?;
+        crate::integrity::commit_account(&repository, self.account_id)?;
+        Ok(path)
     }
 
     pub(crate) fn persist_attachment_unlocked(
@@ -682,6 +705,16 @@ impl CanonicalStore {
             read_json(&self.provider_dir().join(format!("{message_id}.json")))?;
         require_version(record.schema_version, "provider message")?;
         Ok(record.provider_message_id)
+    }
+
+    pub(crate) fn identity_provider_message_id(&self, message_id: Uuid) -> Result<String> {
+        let identity: IdentityRecord =
+            read_json(&self.identities_dir().join(format!("{message_id}.json")))?;
+        require_version(identity.schema_version, "identity")?;
+        if identity.message_id != message_id || identity.provider != self.provider {
+            return Err(error("identity record does not match message/account"));
+        }
+        Ok(identity.provider_message_id)
     }
 
     fn message_id(&self, provider: &str, provider_message_id: &str) -> Result<Uuid> {
@@ -1498,18 +1531,9 @@ mod tests {
             ],
         };
         let first_ids = store.materialize_thread(&thread).unwrap();
-        let messages = repository.data_dir(account.id).join("messages");
-        fs::remove_dir_all(messages.join(first_ids[0].to_string())).unwrap();
-        fs::write(
-            repository
-                .root()
-                .join(".bit-mail/accounts")
-                .join(account.id.to_string())
-                .join("index.sqlite"),
-            "corrupt",
-        )
-        .unwrap();
+        crate::recovery::cache_rebuild(&repository, &account).unwrap();
         let second_ids = store.materialize_thread(&thread).unwrap();
+        let messages = repository.data_dir(account.id).join("messages");
         assert_eq!(first_ids, second_ids);
 
         let index = Connection::open(

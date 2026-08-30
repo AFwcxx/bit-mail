@@ -349,6 +349,10 @@ There is no whole-thread delete command in v1.
 
 `bit-mail` uses BLAKE3-based hierarchical Merkle integrity for canonical/persistent managed state.
 
+Repositories created before integrity support require a one-time, retryable
+`bit-mail migrate-integrity`. Once migrated, missing manifests are treated as
+corruption and are never silently recreated.
+
 If an externally modified managed file is detected, provider mutation fails closed.
 
 Repair an affected message/thread:
@@ -358,6 +362,10 @@ bit-mail repair <message-id>
 ```
 
 Repair re-fetches provider truth and rebuilds the full conversation context. Any affected staged decisions are invalidated and qualifying unread messages return to pending.
+
+The stable identity record and account configuration must pass integrity
+validation before provider access. Corrupt provider-derived message/thread
+cache may then be replaced from provider truth.
 
 ## 13. Garbage collection
 
@@ -374,6 +382,9 @@ bit-mail gc
 ```
 
 Thread context remains while any actionable work item in that thread needs it. Once none remain, cached thread messages and fetched attachments become removable.
+
+`--dry-run` computes the same deterministic reachability plan without changing
+files or writing an audit event.
 
 ## 14. Cache rebuild
 
@@ -463,7 +474,8 @@ entry intact.
 
 Account-scoped Knowledge is never discarded by account removal. If
 `knowledge/accounts/<account-uuid>/` exists, it remains at that UUID-owned path
-for manual recovery and the command prints its location.
+for manual recovery, remains covered by full integrity validation, and the
+command prints its location.
 
 ## 18. Configuration
 

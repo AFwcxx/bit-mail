@@ -46,6 +46,13 @@ message/thread/attachment IDs never appear here.
 └── knowledge.lock
 ```
 
+Each account's schema-v1 integrity manifest records sorted repository-relative
+paths, BLAKE3 file digests, and the account root. Repository configuration and
+global Knowledge use separate manifests below `.bit-mail/integrity/`; a full
+validation derives the repository root from those independently locked roots.
+Knowledge retained after account removal has an orphan branch below
+`.bit-mail/integrity/orphaned-knowledge/` and remains in full validation.
+
 Transient locks remain outside deletable account state so account removal cannot invalidate a held lock.
 
 Provider-specific source records live at

@@ -138,7 +138,10 @@ pub fn stage(
 ) -> Result<usize> {
     validate_stage_state(state)?;
     let _lock = repository.account_lock(account.id)?;
-    stage_unlocked(repository, account, ids, state)
+    crate::integrity::prepare_account_triage(repository, account.id)?;
+    let changed = stage_unlocked(repository, account, ids, state)?;
+    crate::integrity::commit_account_triage(repository, account.id)?;
+    Ok(changed)
 }
 
 pub fn stage_selection(
@@ -149,11 +152,14 @@ pub fn stage_selection(
 ) -> Result<usize> {
     validate_stage_state(state)?;
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account_triage(repository, account.id)?;
     let selection = read_selection(repository, account.id, name)?;
     if selection.message_ids.is_empty() {
         return Ok(0);
     }
-    stage_unlocked(repository, account, &selection.message_ids, state)
+    let changed = stage_unlocked(repository, account, &selection.message_ids, state)?;
+    crate::integrity::commit_account_triage(repository, account.id)?;
+    Ok(changed)
 }
 
 fn stage_unlocked(
@@ -209,7 +215,10 @@ fn stage_unlocked(
 
 pub fn unstage(repository: &Repository, account: &AccountConfig, ids: &[Uuid]) -> Result<usize> {
     let _lock = repository.account_lock(account.id)?;
-    unstage_unlocked(repository, account, ids)
+    crate::integrity::prepare_account_triage(repository, account.id)?;
+    let changed = unstage_unlocked(repository, account, ids)?;
+    crate::integrity::commit_account_triage(repository, account.id)?;
+    Ok(changed)
 }
 
 pub fn unstage_selection(
@@ -218,11 +227,14 @@ pub fn unstage_selection(
     name: &str,
 ) -> Result<usize> {
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account_triage(repository, account.id)?;
     let selection = read_selection(repository, account.id, name)?;
     if selection.message_ids.is_empty() {
         return Ok(0);
     }
-    unstage_unlocked(repository, account, &selection.message_ids)
+    let changed = unstage_unlocked(repository, account, &selection.message_ids)?;
+    crate::integrity::commit_account_triage(repository, account.id)?;
+    Ok(changed)
 }
 
 fn unstage_unlocked(
@@ -275,6 +287,7 @@ pub fn create_selection(
 ) -> Result<Selection> {
     validate_selection_name(name)?;
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account_triage(repository, account.id)?;
     let path = selection_path(repository, account.id, name);
     if path.exists() {
         return Err(error(format!("selection already exists: {name}")));
@@ -287,6 +300,7 @@ pub fn create_selection(
     };
     write_json_atomic(&path, &selection)?;
     audit_selection(repository, account, "selection.create", &selection, &[])?;
+    crate::integrity::commit_account_triage(repository, account.id)?;
     Ok(selection)
 }
 
@@ -298,6 +312,7 @@ pub fn add_selection(
 ) -> Result<Selection> {
     let ids = normalized_ids(ids)?;
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account_triage(repository, account.id)?;
     let mut selection = read_selection(repository, account.id, name)?;
     for id in &ids {
         read_work_item(&work_items_dir(repository, account.id), *id)?;
@@ -316,6 +331,7 @@ pub fn add_selection(
         write_json_atomic(&selection_path(repository, account.id, name), &selection)?;
         audit_selection(repository, account, "selection.add", &selection, &changed)?;
     }
+    crate::integrity::commit_account_triage(repository, account.id)?;
     Ok(selection)
 }
 
@@ -327,6 +343,7 @@ pub fn remove_selection_members(
 ) -> Result<Selection> {
     let ids: HashSet<_> = normalized_ids(ids)?.into_iter().collect();
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account_triage(repository, account.id)?;
     let mut selection = read_selection(repository, account.id, name)?;
     let changed: Vec<_> = selection
         .message_ids
@@ -345,6 +362,7 @@ pub fn remove_selection_members(
             &changed,
         )?;
     }
+    crate::integrity::commit_account_triage(repository, account.id)?;
     Ok(selection)
 }
 
@@ -362,6 +380,7 @@ pub fn delete_selection(
     name: &str,
 ) -> Result<Selection> {
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account_triage(repository, account.id)?;
     let selection = read_selection(repository, account.id, name)?;
     fs::remove_file(selection_path(repository, account.id, name))?;
     audit_selection(
@@ -371,6 +390,7 @@ pub fn delete_selection(
         &selection,
         &selection.message_ids,
     )?;
+    crate::integrity::commit_account_triage(repository, account.id)?;
     Ok(selection)
 }
 
@@ -399,6 +419,7 @@ pub(crate) fn write_pending(
             state: WorkState::Pending,
         },
     )?;
+    crate::integrity::commit_account_triage(repository, account_id)?;
     Ok(true)
 }
 
@@ -411,6 +432,7 @@ pub(crate) fn remove_work_item(
     match fs::remove_file(path) {
         Ok(()) => {
             prune_selection_member(repository, account_id, message_id)?;
+            crate::integrity::commit_account_triage(repository, account_id)?;
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -534,6 +556,17 @@ fn prune_selection_member(
                 },
             )?;
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn prune_selection_members_unlocked(
+    repository: &Repository,
+    account_id: Uuid,
+    message_ids: &[Uuid],
+) -> Result<()> {
+    for message_id in message_ids {
+        prune_selection_member(repository, account_id, *message_id)?;
     }
     Ok(())
 }

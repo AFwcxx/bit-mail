@@ -15,6 +15,8 @@ pub struct Cli {
 pub enum Command {
     /// Initialize a runtime repository in the current directory.
     Init,
+    /// Establish the repository integrity baseline for a pre-M007 repository.
+    MigrateIntegrity,
     /// Connect or reauthorize a Gmail account.
     Connect {
         /// Reauthorize an existing account alias.
@@ -45,6 +47,31 @@ pub enum Command {
     Selection(SelectionArgs),
     /// Manage approved repository Knowledge.
     Knowledge(KnowledgeArgs),
+    /// Repair one message's complete provider thread.
+    Repair { message_id: uuid::Uuid },
+    /// Remove unreachable provider-derived thread cache.
+    Gc(GcArgs),
+    /// Manage disposable provider cache.
+    Cache(CacheArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct GcArgs {
+    /// Report unreachable cache without removing it.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CacheArgs {
+    #[command(subcommand)]
+    pub command: CacheCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CacheCommand {
+    /// Discard provider-derived state while preserving stable identity.
+    Rebuild,
 }
 
 #[derive(Debug, Args)]
@@ -253,6 +280,16 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(arguments).is_ok());
         }
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn recovery_commands_have_stable_cli_shapes() {
+        let id = uuid::Uuid::nil().to_string();
+        assert!(Cli::try_parse_from(["bit-mail", "repair", &id]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "gc", "--dry-run"]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "cache", "rebuild"]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "migrate-integrity"]).is_ok());
         Cli::command().debug_assert();
     }
 }

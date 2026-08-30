@@ -14,6 +14,7 @@ use crate::{
 };
 
 pub fn run(repository: &Repository, reauthorize: Option<&str>) -> Result<()> {
+    repository.require_integrity_ready()?;
     if !io::stdin().is_terminal() {
         return Err(io::Error::other("connect requires an interactive terminal").into());
     }

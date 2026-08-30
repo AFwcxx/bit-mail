@@ -3,8 +3,8 @@ use std::{env, io::Read, process::ExitCode, str::FromStr};
 use bit_mail::{
     Result,
     cli::{
-        AccountCommand, AttachmentCommand, Cli, Command, ConfigCommand, KnowledgeCommand,
-        RawCommand, SelectionCommand,
+        AccountCommand, AttachmentCommand, CacheCommand, Cli, Command, ConfigCommand,
+        KnowledgeCommand, RawCommand, SelectionCommand,
     },
     credentials::{GoogleCredentialRevoker, KeyringStore},
     pull::{AccountReport, PullReport},
@@ -55,6 +55,14 @@ fn run() -> Result<()> {
                 repository.id(),
                 repository.root().display()
             );
+        }
+        Some(Command::MigrateIntegrity) => {
+            let repository = Repository::discover_current()?;
+            if repository.migrate_integrity()? {
+                println!("Migrated repository integrity to schema v2");
+            } else {
+                println!("Repository integrity is already schema v2");
+            }
         }
         Some(Command::Connect { reauthorize }) => {
             let repository = Repository::discover_current()?;
@@ -403,6 +411,47 @@ fn run() -> Result<()> {
                 KnowledgeCommand::Remove { id } => {
                     bit_mail::knowledge::remove(&repository, account.as_ref(), id)?;
                     println!("Removed Knowledge {id}");
+                }
+            }
+        }
+        Some(Command::Repair { message_id }) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let store = KeyringStore::new(repository.id());
+            let report = bit_mail::recovery::repair(&repository, &account, message_id, || {
+                Ok(Box::new(bit_mail::gmail::authorized_client(
+                    &repository,
+                    &account,
+                    &store,
+                )?))
+            })?;
+            println!(
+                "Repaired {} message(s); {} pending",
+                report.thread_messages, report.pending
+            );
+        }
+        Some(Command::Gc(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let report = bit_mail::recovery::gc(&repository, &account, args.dry_run)?;
+            let action = if args.dry_run {
+                "Would remove"
+            } else {
+                "Removed"
+            };
+            println!(
+                "{action} {} thread(s), {} message(s)",
+                report.threads,
+                report.messages.len()
+            );
+        }
+        Some(Command::Cache(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            match args.command {
+                CacheCommand::Rebuild => {
+                    bit_mail::recovery::cache_rebuild(&repository, &account)?;
+                    println!("Rebuilt cache for {}", account.alias);
                 }
             }
         }

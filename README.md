@@ -6,7 +6,7 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-The requirements baseline through offline triage state, selections, and Knowledge is complete. Integrity and recovery are next; progress is tracked under [`docs/milestones/`](docs/milestones/README.md).
+The requirements baseline through integrity and provider-backed recovery is complete. The push engine is next; progress is tracked under [`docs/milestones/`](docs/milestones/README.md).
 
 ## Core workflow
 

@@ -12,7 +12,8 @@ use uuid::Uuid;
 
 use crate::Result;
 
-const SCHEMA_VERSION: u32 = 1;
+const REPOSITORY_SCHEMA_VERSION: u32 = 2;
+const FILE_SCHEMA_VERSION: u32 = 1;
 const MANAGED_DIRS: [&str; 4] = ["data", "knowledge", "skills", ".bit-mail"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,7 +50,7 @@ pub struct PullConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
+            schema_version: FILE_SCHEMA_VERSION,
             pull: PullConfig { default_limit: 500 },
             oauth_clients: Vec::new(),
         }
@@ -97,11 +98,15 @@ impl Repository {
             write_toml(
                 &staging.join(".bit-mail/repository.toml"),
                 &RepositoryMetadata {
-                    schema_version: SCHEMA_VERSION,
+                    schema_version: REPOSITORY_SCHEMA_VERSION,
                     id,
                 },
             )?;
             write_toml(&staging.join(".bit-mail/config.toml"), &Config::default())?;
+            write_private(
+                &staging.join(".bit-mail/integrity-migration"),
+                b"initial integrity build in progress\n",
+            )?;
 
             publish_staged(&root, &staging)
         })();
@@ -116,6 +121,8 @@ impl Repository {
         result?;
 
         let repository = Self::open(root)?;
+        crate::integrity::rebuild_full(&repository)?;
+        fs::remove_file(repository.root.join(".bit-mail/integrity-migration"))?;
         if let Err(error) = protect_git_paths(repository.root(), policy) {
             eprintln!("warning: repository initialized, but Git ignore protection failed: {error}");
         }
@@ -147,7 +154,7 @@ impl Repository {
 
     pub fn open(root: PathBuf) -> Result<Self> {
         let metadata: RepositoryMetadata = read_toml(&root.join(".bit-mail/repository.toml"))?;
-        require_version(metadata.schema_version, "repository")?;
+        require_repository_version(metadata.schema_version)?;
         let config: Config = read_toml(&root.join(".bit-mail/config.toml"))?;
         require_version(config.schema_version, "config")?;
         Ok(Self { root, metadata })
@@ -161,6 +168,49 @@ impl Repository {
         self.metadata.id
     }
 
+    pub(crate) fn require_integrity_ready(&self) -> Result<()> {
+        if self.metadata.schema_version != REPOSITORY_SCHEMA_VERSION {
+            return Err(message(
+                "repository integrity is not initialized; run `bit-mail migrate-integrity`",
+            ));
+        }
+        if self.root.join(".bit-mail/integrity-migration").exists() {
+            return Err(message(
+                "repository integrity migration is incomplete; rerun `bit-mail migrate-integrity`",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn migrate_integrity(&self) -> Result<bool> {
+        let marker = self.root.join(".bit-mail/integrity-migration");
+        if self.metadata.schema_version == REPOSITORY_SCHEMA_VERSION && !marker.exists() {
+            return Ok(false);
+        }
+        let _lifecycle = self.account_lifecycle_lock()?;
+        let mut accounts = self.accounts()?;
+        accounts.sort_by_key(|account| account.id);
+        let _account_locks = accounts
+            .iter()
+            .map(|account| self.account_lock(account.id))
+            .collect::<Result<Vec<_>>>()?;
+        let _knowledge = self.knowledge_lock()?;
+        if !marker.exists() {
+            write_private(&marker, b"integrity schema v1 migration in progress\n")?;
+        }
+        write_toml_atomic(
+            &self.root.join(".bit-mail/repository.toml"),
+            &RepositoryMetadata {
+                schema_version: REPOSITORY_SCHEMA_VERSION,
+                id: self.metadata.id,
+            },
+        )?;
+        let current = Self::open(self.root.clone())?;
+        crate::integrity::rebuild_full(&current)?;
+        fs::remove_file(marker)?;
+        Ok(true)
+    }
+
     pub fn config(&self) -> Result<Config> {
         let config: Config = read_toml(&self.root.join(".bit-mail/config.toml"))?;
         require_version(config.schema_version, "config")?;
@@ -169,6 +219,7 @@ impl Repository {
 
     pub fn set_config(&self, key: &str, value: &str) -> Result<Config> {
         let _lifecycle_lock = self.account_lifecycle_lock()?;
+        crate::integrity::prepare_repository(self)?;
         let mut config = self.config()?;
         match key {
             "pull.default-limit" => {
@@ -181,6 +232,7 @@ impl Repository {
             _ => return Err(message(format!("unsupported config key: {key}"))),
         }
         write_toml_atomic(&self.root.join(".bit-mail/config.toml"), &config)?;
+        crate::integrity::commit_repository(self)?;
         Ok(config)
     }
 
@@ -190,6 +242,7 @@ impl Repository {
             return Err(message("invalid Google OAuth client profile"));
         }
         let _lifecycle_lock = self.account_lifecycle_lock()?;
+        crate::integrity::prepare_repository(self)?;
         let mut config = self.config()?;
         if config
             .oauth_clients
@@ -203,7 +256,8 @@ impl Repository {
         }
         config.oauth_clients.push(profile);
         config.oauth_clients.sort_by(|a, b| a.alias.cmp(&b.alias));
-        write_toml_atomic(&self.root.join(".bit-mail/config.toml"), &config)
+        write_toml_atomic(&self.root.join(".bit-mail/config.toml"), &config)?;
+        crate::integrity::commit_repository(self)
     }
 
     pub fn config_toml(&self) -> Result<String> {
@@ -247,12 +301,22 @@ fn publish_staged(root: &Path, staging: &Path) -> Result<()> {
     Ok(())
 }
 
-fn require_version(version: u32, kind: &str) -> Result<()> {
-    if version == SCHEMA_VERSION {
+fn require_repository_version(version: u32) -> Result<()> {
+    if matches!(version, 1 | REPOSITORY_SCHEMA_VERSION) {
         Ok(())
     } else {
         Err(message(format!(
-            "unsupported {kind} schema version {version}; supported version is {SCHEMA_VERSION}"
+            "unsupported repository schema version {version}; supported versions are 1 and {REPOSITORY_SCHEMA_VERSION}"
+        )))
+    }
+}
+
+fn require_version(version: u32, kind: &str) -> Result<()> {
+    if version == FILE_SCHEMA_VERSION {
+        Ok(())
+    } else {
+        Err(message(format!(
+            "unsupported {kind} schema version {version}; supported version is {FILE_SCHEMA_VERSION}"
         )))
     }
 }
@@ -540,6 +604,7 @@ impl Repository {
         id: Uuid,
         new: NewAccount<'_>,
     ) -> Result<AccountConfig> {
+        self.require_integrity_ready()?;
         validate_alias(new.alias)?;
         let _lifecycle_lock = self.account_lifecycle_lock()?;
         let accounts = self.accounts()?;
@@ -564,7 +629,7 @@ impl Repository {
         }
 
         let account = AccountConfig {
-            schema_version: SCHEMA_VERSION,
+            schema_version: FILE_SCHEMA_VERSION,
             id,
             alias: new.alias.to_owned(),
             provider: new.provider.to_owned(),
@@ -606,6 +671,7 @@ impl Repository {
                 rollback_failures.join(", ")
             )));
         }
+        crate::integrity::reset_account(self, account.id)?;
         Ok(account)
     }
 
@@ -630,8 +696,10 @@ impl Repository {
             .find(|account| account.alias == old_alias)
             .ok_or_else(|| message(format!("unknown account alias: {old_alias}")))?;
         let _lock = self.account_lock(account.id)?;
+        crate::integrity::prepare_account(self, account.id)?;
         account.alias = new_alias.to_owned();
         write_toml_atomic(&self.account_dir(account.id).join("account.toml"), &account)?;
+        crate::integrity::commit_account(self, account.id)?;
         Ok(account)
     }
 
@@ -644,6 +712,12 @@ impl Repository {
         let _lifecycle_lock = self.account_lifecycle_lock()?;
         let account = self.account_by_alias(alias)?;
         let _lock = self.account_lock(account.id)?;
+        if options.discard_local_data {
+            crate::integrity::bootstrap_account(self, account.id)?;
+            crate::integrity::validate_preserved_account(self, account.id)?;
+        } else {
+            crate::integrity::prepare_account(self, account.id)?;
+        }
         let account_dir = self.account_dir(account.id);
         let data_dir = self.data_dir(account.id);
         if has_meaningful_account_state(&account_dir, &data_dir)? && !options.discard_local_data {
@@ -665,11 +739,14 @@ impl Repository {
         if data_dir.exists() {
             fs::remove_dir_all(data_dir)?;
         }
-        fs::remove_dir_all(account_dir)?;
         let knowledge_dir = self
             .root
             .join("knowledge/accounts")
             .join(account.id.to_string());
+        if knowledge_dir.is_dir() {
+            crate::integrity::commit_orphan_knowledge(self, account.id)?;
+        }
+        fs::remove_dir_all(account_dir)?;
         if knowledge_dir.exists() {
             eprintln!(
                 "warning: preserved account Knowledge at {}",
@@ -789,7 +866,7 @@ fn has_meaningful_account_state(account_dir: &Path, data_dir: &Path) -> Result<b
     }
     for entry in fs::read_dir(account_dir)? {
         let name = entry?.file_name();
-        if name != "account.toml" {
+        if name != "account.toml" && name != "integrity" {
             return Ok(true);
         }
     }
@@ -902,7 +979,7 @@ mod tests {
         let (_directory, repository) = repository();
         fs::write(
             repository.root().join(".bit-mail/repository.toml"),
-            format!("schema_version = 2\nid = \"{}\"\n", repository.id()),
+            format!("schema_version = 3\nid = \"{}\"\n", repository.id()),
         )
         .expect("replace metadata for compatibility test");
 
@@ -912,8 +989,58 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("unsupported repository schema version 2")
+                .contains("unsupported repository schema version 3")
         );
+    }
+
+    #[test]
+    fn integrity_migration_is_explicit_and_missing_v2_manifests_fail_closed() {
+        let (_directory, repository) = repository();
+        fs::write(
+            repository.root().join(".bit-mail/repository.toml"),
+            format!("schema_version = 1\nid = \"{}\"\n", repository.id()),
+        )
+        .unwrap();
+        let legacy = Repository::open(repository.root().to_path_buf()).unwrap();
+        assert!(
+            legacy
+                .create_account(NewAccount {
+                    alias: "blocked",
+                    provider: "gmail",
+                    provider_identity: None,
+                    credential_profile: None,
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("migrate-integrity")
+        );
+        assert!(legacy.migrate_integrity().unwrap());
+        let current = Repository::open(repository.root().to_path_buf()).unwrap();
+        let account = add_account(&current, "mail", "mail@example.com");
+        fs::write(
+            current.root().join(".bit-mail/integrity-migration"),
+            "interrupted",
+        )
+        .unwrap();
+        fs::remove_file(
+            current
+                .account_dir(account.id)
+                .join("integrity/manifest.json"),
+        )
+        .unwrap();
+        assert!(current.migrate_integrity().unwrap());
+        assert!(
+            crate::integrity::validate_account(&current, account.id)
+                .unwrap()
+                .is_empty()
+        );
+        fs::remove_file(
+            current
+                .account_dir(account.id)
+                .join("integrity/manifest.json"),
+        )
+        .unwrap();
+        assert!(current.rename_account("mail", "renamed").is_err());
     }
 
     #[test]

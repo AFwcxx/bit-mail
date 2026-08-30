@@ -100,6 +100,7 @@ where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
 {
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account(repository, account.id)?;
     let paths = Paths::new(repository, account.id);
     create_private_dir(&paths.work_items)?;
     if triage::staged(repository, account.id)? {
@@ -245,6 +246,7 @@ where
     } else {
         result.outcome = Outcome::Failed;
     }
+    crate::integrity::commit_account(repository, account.id)?;
     Ok(result)
 }
 
@@ -259,13 +261,16 @@ where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
 {
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account(repository, account.id)?;
     let store = CanonicalStore::new(repository, account)?;
     match store.attachment_state(message_id, part_id)? {
         AttachmentState::Local { path } => Ok(path),
         AttachmentState::Remote(remote) => {
             let provider_id = store.provider_message_id(message_id)?;
             let bytes = provider()?.attachment(&provider_id, &remote.provider_attachment_id)?;
-            store.persist_attachment_unlocked(message_id, part_id, &bytes)
+            let path = store.persist_attachment_unlocked(message_id, part_id, &bytes)?;
+            crate::integrity::commit_account(repository, account.id)?;
+            Ok(path)
         }
     }
 }
@@ -280,6 +285,7 @@ where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
 {
     let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account(repository, account.id)?;
     let store = CanonicalStore::new(repository, account)?;
     let path = store.raw_path(message_id);
     if path.is_file() {
@@ -287,7 +293,9 @@ where
     }
     let provider_id = store.provider_message_id(message_id)?;
     let bytes = provider()?.raw(&provider_id)?;
-    store.persist_raw_unlocked(message_id, &bytes)
+    let path = store.persist_raw_unlocked(message_id, &bytes)?;
+    crate::integrity::commit_account(repository, account.id)?;
+    Ok(path)
 }
 
 fn fetch_threads(
@@ -840,6 +848,7 @@ mod tests {
             },
         )
         .unwrap();
+        crate::integrity::commit_account(&repository, account.id).unwrap();
         let report = pull_account(
             &repository,
             &account,

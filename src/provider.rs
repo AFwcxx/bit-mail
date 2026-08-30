@@ -52,6 +52,13 @@ pub trait MailProvider: Sync {
     fn unread_page(&self, page: Option<&str>, limit: u32) -> Result<Page<MessageRef>>;
     fn history_page(&self, start: &str, page: Option<&str>) -> Result<HistoryPage>;
     fn message_state(&self, id: &str) -> Result<MessageState>;
+    fn message_ref(&self, _id: &str) -> Result<MessageRef> {
+        Err(ProviderError(
+            ProviderErrorKind::Permanent,
+            "provider message lookup is unsupported",
+        )
+        .into())
+    }
     fn thread(&self, id: &str) -> Result<ThreadInput>;
     fn attachment(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>>;
     fn raw(&self, message_id: &str) -> Result<Vec<u8>>;

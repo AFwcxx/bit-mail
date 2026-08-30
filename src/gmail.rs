@@ -540,6 +540,16 @@ impl MailProvider for GmailClient {
         }
     }
 
+    fn message_ref(&self, id: &str) -> Result<MessageRef> {
+        let message: ApiMessage = self.get(
+            Operation::MessageState,
+            &format!("messages/{id}"),
+            &[("format", "minimal".into())],
+            ProviderErrorKind::Missing,
+        )?;
+        Ok(message_ref(message))
+    }
+
     fn thread(&self, id: &str) -> Result<ThreadInput> {
         let thread: ThreadResponse = self.get(
             Operation::Thread,

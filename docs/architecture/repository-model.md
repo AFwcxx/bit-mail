@@ -26,7 +26,7 @@ skill contents and `AGENTS.md` bootstrap.
 `.bit-mail/repository.toml` contains immutable repository identity:
 
 ```toml
-schema_version = 1
+schema_version = 2
 id = "<uuid-v4>"
 ```
 
@@ -41,6 +41,10 @@ default_limit = 500
 
 Unknown fields and unsupported schema versions are rejected. The only M002
 `config set` key is `pull.default-limit`, which must be a positive integer.
+
+Pre-integrity repository schema v1 remains readable, but mutations require a
+one-time `bit-mail migrate-integrity`. Once schema v2 is active, missing
+integrity manifests fail closed instead of establishing a new baseline.
 
 ## Repository discovery
 

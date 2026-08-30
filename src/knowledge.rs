@@ -71,11 +71,17 @@ pub fn add(
     match account {
         Some(account) => {
             let _lock = repository.account_lock(account.id)?;
-            add_unlocked(repository, Some(account), &content)
+            crate::integrity::prepare_account_knowledge(repository, account.id)?;
+            let item = add_unlocked(repository, Some(account), &content)?;
+            crate::integrity::commit_account_knowledge(repository, account.id)?;
+            Ok(item)
         }
         None => {
             let _lock = repository.knowledge_lock()?;
-            add_unlocked(repository, None, &content)
+            crate::integrity::prepare_knowledge(repository)?;
+            let item = add_unlocked(repository, None, &content)?;
+            crate::integrity::commit_knowledge(repository)?;
+            Ok(item)
         }
     }
 }
@@ -141,11 +147,17 @@ pub fn update(
     match account {
         Some(account) => {
             let _lock = repository.account_lock(account.id)?;
-            update_unlocked(repository, Some(account), id, &content)
+            crate::integrity::prepare_account_knowledge(repository, account.id)?;
+            let item = update_unlocked(repository, Some(account), id, &content)?;
+            crate::integrity::commit_account_knowledge(repository, account.id)?;
+            Ok(item)
         }
         None => {
             let _lock = repository.knowledge_lock()?;
-            update_unlocked(repository, None, id, &content)
+            crate::integrity::prepare_knowledge(repository)?;
+            let item = update_unlocked(repository, None, id, &content)?;
+            crate::integrity::commit_knowledge(repository)?;
+            Ok(item)
         }
     }
 }
@@ -169,11 +181,15 @@ pub fn remove(repository: &Repository, account: Option<&AccountConfig>, id: Uuid
     match account {
         Some(account) => {
             let _lock = repository.account_lock(account.id)?;
-            remove_unlocked(repository, Some(account), id)
+            crate::integrity::prepare_account_knowledge(repository, account.id)?;
+            remove_unlocked(repository, Some(account), id)?;
+            crate::integrity::commit_account_knowledge(repository, account.id)
         }
         None => {
             let _lock = repository.knowledge_lock()?;
-            remove_unlocked(repository, None, id)
+            crate::integrity::prepare_knowledge(repository)?;
+            remove_unlocked(repository, None, id)?;
+            crate::integrity::commit_knowledge(repository)
         }
     }
 }

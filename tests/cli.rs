@@ -143,12 +143,12 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
     assert!(rename.status.success());
 
     fs::write(repository.data_dir(personal.id).join("mail"), "private").expect("local mail");
-    let knowledge_dir = directory
-        .path()
-        .join("knowledge/accounts")
-        .join(personal.id.to_string());
-    fs::create_dir(&knowledge_dir).expect("account Knowledge directory");
-    fs::write(knowledge_dir.join("preference.md"), "keep me").expect("account Knowledge");
+    let renamed = repository
+        .account_by_alias("private_mail")
+        .expect("renamed account");
+    let knowledge = bit_mail::knowledge::add(&repository, Some(&renamed), "keep me")
+        .expect("account Knowledge");
+    let knowledge_before = fs::read(&knowledge.path).expect("serialized account Knowledge");
 
     let remove = common::bit_mail()
         .current_dir(directory.path())
@@ -159,8 +159,22 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
     assert!(String::from_utf8_lossy(&remove.stderr).contains("preserved account Knowledge"));
     assert!(repository.account_by_alias("private_mail").is_err());
     assert_eq!(
-        fs::read_to_string(knowledge_dir.join("preference.md")).expect("preserved Knowledge"),
-        "keep me"
+        fs::read(&knowledge.path).expect("preserved Knowledge"),
+        knowledge_before
+    );
+    assert!(
+        bit_mail::integrity::validate_full(&repository)
+            .expect("validate preserved Knowledge")
+            .mismatches
+            .is_empty()
+    );
+    fs::write(&knowledge.path, "tampered orphan Knowledge").expect("tamper preserved Knowledge");
+    assert!(
+        bit_mail::integrity::validate_full(&repository)
+            .expect("detect preserved Knowledge tamper")
+            .mismatches
+            .iter()
+            .any(|item| item.path.ends_with(&format!("{}.md", knowledge.id)))
     );
 }
 

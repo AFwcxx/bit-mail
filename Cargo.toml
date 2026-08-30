@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 base64 = "0.22"
+blake3 = "1"
 clap = { version = "4", features = ["derive"] }
 httpdate = "1"
 keyring = "4"
@@ -26,4 +27,6 @@ url = "2"
 uuid = { version = "1", features = ["serde", "v4", "v7"] }
 
 [dev-dependencies]
+blake3 = { version = "1", features = ["rayon"] }
+memmap2 = "0.9"
 tempfile = "3"
