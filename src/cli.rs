@@ -33,6 +33,8 @@ pub enum Command {
     Path(AccountScopeArgs),
     /// Pull provider truth into the local repository.
     Pull(PullArgs),
+    /// Apply staged local intent to the selected provider account.
+    Push(PushArgs),
     /// Fetch an attachment on demand.
     Attachment(AttachmentArgs),
     /// Fetch optional raw message source.
@@ -171,6 +173,25 @@ pub struct PullArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct PushArgs {
+    /// Preview without confirmation, network access, or mutation.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Push one staged message.
+    #[arg(long, value_name = "ID", conflicts_with = "selection")]
+    pub message: Option<uuid::Uuid>,
+    /// Push staged members of one selection.
+    #[arg(long, value_name = "NAME", conflicts_with = "message")]
+    pub selection: Option<String>,
+    /// Deliberately bypass both normal and threaded-delete confirmations.
+    #[arg(long)]
+    pub yes: bool,
+    /// Emit the versioned preview/result schema.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct AttachmentArgs {
     #[command(subcommand)]
     pub command: AttachmentCommand,
@@ -291,5 +312,25 @@ mod tests {
         assert!(Cli::try_parse_from(["bit-mail", "cache", "rebuild"]).is_ok());
         assert!(Cli::try_parse_from(["bit-mail", "migrate-integrity"]).is_ok());
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn push_cli_has_account_scoped_shapes_only() {
+        let id = uuid::Uuid::nil().to_string();
+        assert!(Cli::try_parse_from(["bit-mail", "push", "--dry-run", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "push", "--message", &id, "--yes"]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "push", "--selection", "review"]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "push", "--all-accounts"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "bit-mail",
+                "push",
+                "--message",
+                &id,
+                "--selection",
+                "review"
+            ])
+            .is_err()
+        );
     }
 }

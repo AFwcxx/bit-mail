@@ -1,4 +1,9 @@
-use std::{env, io::Read, process::ExitCode, str::FromStr};
+use std::{
+    env,
+    io::{IsTerminal, Read, Write},
+    process::ExitCode,
+    str::FromStr,
+};
 
 use bit_mail::{
     Result,
@@ -201,6 +206,44 @@ fn run() -> Result<()> {
                     "pull completed with blocked or failed accounts",
                 )
                 .into());
+            }
+        }
+        Some(Command::Push(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            let scope = if let Some(message) = args.message {
+                bit_mail::push::PushScope::Message(message)
+            } else if let Some(selection) = args.selection.clone() {
+                bit_mail::push::PushScope::Selection(selection)
+            } else {
+                bit_mail::push::PushScope::AllStaged
+            };
+            let store = KeyringStore::new(repository.id());
+            let report = bit_mail::push::push_account(
+                &repository,
+                &account,
+                bit_mail::push::PushOptions {
+                    scope,
+                    dry_run: args.dry_run,
+                },
+                || {
+                    Ok(Box::new(bit_mail::gmail::authorized_client(
+                        &repository,
+                        &account,
+                        &store,
+                    )?))
+                },
+                |stage, preview| review_push(stage, preview, args.yes),
+            )?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else if args.dry_run {
+                print_push_preview(&report, false);
+            } else {
+                print_push_result(&report);
+            }
+            if report.failed() {
+                return Err(std::io::Error::other("push completed with failures").into());
             }
         }
         Some(Command::Attachment(args)) => {
@@ -483,6 +526,97 @@ fn stdin_ids() -> Result<Vec<uuid::Uuid>> {
         return Err(std::io::Error::other("stdin contained no message IDs").into());
     }
     Ok(ids)
+}
+
+fn review_push(
+    stage: bit_mail::push::ReviewStage,
+    report: &bit_mail::push::PushReport,
+    yes: bool,
+) -> Result<bool> {
+    match stage {
+        bit_mail::push::ReviewStage::Normal => print_push_preview(report, true),
+        bit_mail::push::ReviewStage::ThreadedDelete => {
+            eprintln!("Threaded delete risk:");
+            for item in report.items.iter().filter(|item| item.threaded_delete) {
+                eprintln!("  delete {} from a multi-message thread", item.message_id);
+            }
+        }
+    }
+    if yes {
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(std::io::Error::other(
+            "push confirmation requires an interactive terminal; use --yes deliberately",
+        )
+        .into());
+    }
+    let prompt = match stage {
+        bit_mail::push::ReviewStage::Normal => "Apply these staged actions? [y/N] ",
+        bit_mail::push::ReviewStage::ThreadedDelete => {
+            "Also confirm the threaded message deletes? [y/N] "
+        }
+    };
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+fn print_push_preview(report: &bit_mail::push::PushReport, stderr: bool) {
+    let reads = report
+        .items
+        .iter()
+        .filter(|item| item.action == bit_mail::push::PushAction::Read)
+        .count();
+    let deletes = report.items.len() - reads;
+    let risks = report
+        .items
+        .iter()
+        .filter(|item| item.threaded_delete)
+        .count();
+    let line = format!(
+        "Push preview for {}: {reads} read, {deletes} delete, {risks} threaded-delete risk",
+        report.account_alias
+    );
+    if stderr {
+        eprintln!("{line}");
+        for item in &report.items {
+            eprintln!(
+                "  {:?}\t{}{}",
+                item.action,
+                item.message_id,
+                if item.threaded_delete {
+                    "\tTHREADED DELETE"
+                } else {
+                    ""
+                }
+            );
+        }
+    } else {
+        println!("{line}");
+    }
+}
+
+fn print_push_result(report: &bit_mail::push::PushReport) {
+    println!(
+        "Push {:?}: {} item(s), {} retries",
+        report.outcome,
+        report.items.len(),
+        report.retries
+    );
+    for item in &report.items {
+        if item.outcome == bit_mail::push::ItemOutcome::Missing {
+            eprintln!(
+                "warning: provider message {} is missing; resolved locally",
+                item.message_id
+            );
+        }
+    }
 }
 
 #[cfg(test)]

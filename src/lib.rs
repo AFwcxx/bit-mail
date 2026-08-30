@@ -12,6 +12,7 @@ pub mod integrity;
 pub mod knowledge;
 pub mod provider;
 pub mod pull;
+pub mod push;
 pub mod recovery;
 pub mod repository;
 pub mod storage;

@@ -20,6 +20,7 @@ Reduce unread workload while preserving important information.
 5. Summarize semantically for the user/harness session.
 6. Stage only the resulting operational decision through `bit-mail stage`.
 7. Stop before `push` unless the user explicitly authorizes it.
+8. Never add `--yes` autonomously; it also bypasses the threaded-delete confirmation.
 
 ## Important distinctions
 

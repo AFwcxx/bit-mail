@@ -322,6 +322,11 @@ Dry run:
 bit-mail push --dry-run
 ```
 
+Dry-run validates the selected local integrity scope and prints the exact staged
+plan without opening credentials, contacting Gmail, prompting, or changing
+local state. Add `--json` for the versioned machine-readable preview/result
+schema.
+
 Partial push:
 
 ```bash
@@ -335,6 +340,13 @@ Deliberate scripted confirmation bypass:
 bit-mail push --yes
 ```
 
+Normal execution prints the read/delete preview and asks for confirmation. If
+any delete targets a message in a multi-message thread, it then prints those
+messages separately and asks for a second confirmation. A declined prompt is a
+successful cancellation with no provider or local mutation. Non-interactive
+execution must use `--yes`, which deliberately bypasses both confirmations;
+human output still displays the preview.
+
 AI harnesses must not run `push` unless the user explicitly authorizes it in the current interaction. Harness skills should not autonomously use `--yes`.
 
 There is no `push --all-accounts`.
@@ -344,6 +356,11 @@ There is no `push --all-accounts`.
 If staged deletes affect messages that belong to multi-message conversation threads, `push` must identify them and require an additional review/confirmation step.
 
 There is no whole-thread delete command in v1.
+
+Each message is committed independently. Already-satisfied and provider-missing
+messages resolve locally; permanent failures stay staged, keep pull blocked,
+and produce a failing command result. Successful messages are removed from work
+items and selections, and thread context made unreachable by that push is collected.
 
 ## 12. Repair and integrity
 

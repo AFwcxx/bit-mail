@@ -37,6 +37,7 @@ Do not depend on `.bit-mail/**` internal layout; use domain commands instead.
 4. `stage ... read` or `stage ... delete` records local intent only.
 5. `unstage` returns staged intent to pending.
 6. `push` mutates the provider and requires explicit user authorization in the current interaction.
+7. Never invoke `push --yes` autonomously. It bypasses both confirmations, including the extra threaded-delete confirmation.
 
 ## Deletion safety
 

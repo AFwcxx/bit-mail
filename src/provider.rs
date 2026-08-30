@@ -44,6 +44,12 @@ pub enum MessageState {
     Missing,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushMessageState {
+    pub unread: bool,
+    pub trash: bool,
+}
+
 pub trait MailProvider: Sync {
     fn retries(&self) -> u32 {
         0
@@ -56,6 +62,27 @@ pub trait MailProvider: Sync {
         Err(ProviderError(
             ProviderErrorKind::Permanent,
             "provider message lookup is unsupported",
+        )
+        .into())
+    }
+    fn push_state(&self, _id: &str) -> Result<Option<PushMessageState>> {
+        Err(ProviderError(
+            ProviderErrorKind::Permanent,
+            "provider push state lookup is unsupported",
+        )
+        .into())
+    }
+    fn mark_read(&self, _id: &str) -> Result<PushMessageState> {
+        Err(ProviderError(
+            ProviderErrorKind::Permanent,
+            "provider mark-read is unsupported",
+        )
+        .into())
+    }
+    fn trash(&self, _id: &str) -> Result<PushMessageState> {
+        Err(ProviderError(
+            ProviderErrorKind::Permanent,
+            "provider Trash is unsupported",
         )
         .into())
     }

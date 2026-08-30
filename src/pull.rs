@@ -88,6 +88,8 @@ struct ProviderState {
     backlog_page_token: Option<String>,
     backlog_remaining: bool,
     last_successful_pull_ms: Option<u64>,
+    #[serde(default)]
+    last_successful_push_ms: Option<u64>,
 }
 
 pub fn pull_account<F>(
@@ -241,6 +243,7 @@ where
             last_successful_pull_ms: Some(
                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
             ),
+            last_successful_push_ms: state.last_successful_push_ms,
         };
         write_json_atomic(&paths.provider_state, &state)?;
     } else {
@@ -248,6 +251,16 @@ where
     }
     crate::integrity::commit_account(repository, account.id)?;
     Ok(result)
+}
+
+pub(crate) fn record_successful_push(repository: &Repository, account_id: Uuid) -> Result<u64> {
+    let path = Paths::new(repository, account_id).provider_state;
+    let mut state = read_state(&path)?;
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+    state.schema_version = SCHEMA_VERSION;
+    state.last_successful_push_ms = Some(timestamp);
+    write_json_atomic(&path, &state)?;
+    Ok(timestamp)
 }
 
 pub fn fetch_attachment<F>(

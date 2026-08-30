@@ -27,7 +27,7 @@ Milestones are the execution boundary for development sessions, worktrees, and p
 | M005 | [Pull engine](005-pull-engine.md) | **Complete** | Bounded/incremental full-context Gmail pull and reconciliation |
 | M006 | [Triage state, selections, Knowledge](006-triage-state-selections-knowledge.md) | **Complete** | Work items, stage/unstage, selections, Knowledge |
 | M007 | [Integrity and recovery](007-integrity-recovery.md) | **Complete** | BLAKE3 Merkle integrity, repair, GC, cache rebuild |
-| M008 | [Push engine](008-push-engine.md) | Planned | Reviewed/idempotent Gmail read/Trash commit path |
+| M008 | [Push engine](008-push-engine.md) | **Complete** | Reviewed/idempotent Gmail read/Trash commit path |
 | M009 | [Harness runtime integration](009-harness-runtime-integration.md) | Planned | Embedded templates, skills, context/help JSON contracts |
 | M010 | [Diagnostics and hardening](010-diagnostics-hardening.md) | Planned | `doctor`, permissions, Git tracking checks, robust diagnostics |
 | M011 | [Testing and performance](011-testing-performance.md) | Planned | Provider contract tests, live opt-in tests, benchmarks, optimization |

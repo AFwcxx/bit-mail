@@ -20,7 +20,8 @@ use crate::{
     Result,
     credentials::{CredentialId, CredentialStore},
     provider::{
-        HistoryPage, MailProvider, MessageRef, MessageState, Page, ProviderError, ProviderErrorKind,
+        HistoryPage, MailProvider, MessageRef, MessageState, Page, ProviderError,
+        ProviderErrorKind, PushMessageState,
     },
     repository::{AccountConfig, Repository},
     storage::{
@@ -149,6 +150,9 @@ enum Operation {
     Thread,
     Attachment,
     RawMessage,
+    PushState,
+    MarkRead,
+    Trash,
 }
 
 impl Operation {
@@ -161,6 +165,9 @@ impl Operation {
             Self::Thread => "thread",
             Self::Attachment => "attachment",
             Self::RawMessage => "raw message",
+            Self::PushState => "push state",
+            Self::MarkRead => "mark read",
+            Self::Trash => "trash message",
         }
     }
 }
@@ -287,6 +294,89 @@ impl GmailClient {
                 }
                 Err(_) => {
                     tracing::warn!(provider = "gmail", operation, "provider transport failed");
+                    return Err(ProviderError(
+                        ProviderErrorKind::Permanent,
+                        "Gmail transport failed",
+                    )
+                    .into());
+                }
+            }
+        }
+        Err(ProviderError(ProviderErrorKind::Permanent, "Gmail retry limit exceeded").into())
+    }
+
+    fn post<T: DeserializeOwned>(
+        &self,
+        operation: Operation,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<T> {
+        let url = Url::parse(&format!("{}/gmail/v1/users/me/{path}", self.base_url))?;
+        let operation = operation.label();
+        for attempt in 0..=3 {
+            let sent = self
+                .http
+                .post(url.clone())
+                .bearer_auth(&self.access_token)
+                .json(body)
+                .send();
+            match sent {
+                Ok(response) if response.status().is_success() => {
+                    return response.json().map_err(|_| {
+                        ProviderError(
+                            ProviderErrorKind::Permanent,
+                            "Gmail returned malformed JSON",
+                        )
+                        .into()
+                    });
+                }
+                Ok(response) if matches!(response.status().as_u16(), 401 | 403) => {
+                    return Err(ProviderError(
+                        ProviderErrorKind::Authentication,
+                        "Gmail authorization failed; reauthorize the account",
+                    )
+                    .into());
+                }
+                Ok(response) if response.status().as_u16() == 404 => {
+                    return Err(ProviderError(
+                        ProviderErrorKind::Missing,
+                        "Gmail object is unavailable",
+                    )
+                    .into());
+                }
+                Ok(response)
+                    if response.status().as_u16() == 429 || response.status().is_server_error() =>
+                {
+                    if attempt == 3 {
+                        break;
+                    }
+                    let delay = response
+                        .headers()
+                        .get(reqwest::header::RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(retry_after)
+                        .unwrap_or(Duration::from_millis(250 << attempt));
+                    self.retries.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!(
+                        provider = "gmail",
+                        operation,
+                        attempt = attempt + 1,
+                        "provider request retry"
+                    );
+                    std::thread::sleep(delay.min(Duration::from_secs(30)));
+                }
+                Ok(_) => {
+                    return Err(ProviderError(
+                        ProviderErrorKind::Permanent,
+                        "Gmail request failed",
+                    )
+                    .into());
+                }
+                Err(_) if attempt < 3 => {
+                    self.retries.fetch_add(1, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(250 << attempt));
+                }
+                Err(_) => {
                     return Err(ProviderError(
                         ProviderErrorKind::Permanent,
                         "Gmail transport failed",
@@ -540,6 +630,47 @@ impl MailProvider for GmailClient {
         }
     }
 
+    fn push_state(&self, id: &str) -> Result<Option<PushMessageState>> {
+        let result = self.get::<ApiMessage>(
+            Operation::PushState,
+            &format!("messages/{id}"),
+            &[
+                ("format", "minimal".into()),
+                ("fields", "id,threadId,labelIds".into()),
+            ],
+            ProviderErrorKind::Missing,
+        );
+        match result {
+            Ok(message) => Ok(Some(push_message_state(&message))),
+            Err(error)
+                if error
+                    .downcast_ref::<ProviderError>()
+                    .is_some_and(|error| error.0 == ProviderErrorKind::Missing) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn mark_read(&self, id: &str) -> Result<PushMessageState> {
+        let message: ApiMessage = self.post(
+            Operation::MarkRead,
+            &format!("messages/{id}/modify"),
+            &serde_json::json!({"removeLabelIds": ["UNREAD"]}),
+        )?;
+        Ok(push_message_state(&message))
+    }
+
+    fn trash(&self, id: &str) -> Result<PushMessageState> {
+        let message: ApiMessage = self.post(
+            Operation::Trash,
+            &format!("messages/{id}/trash"),
+            &serde_json::json!({}),
+        )?;
+        Ok(push_message_state(&message))
+    }
+
     fn message_ref(&self, id: &str) -> Result<MessageRef> {
         let message: ApiMessage = self.get(
             Operation::MessageState,
@@ -591,6 +722,13 @@ impl MailProvider for GmailClient {
             ProviderErrorKind::Missing,
         )?;
         decode(&raw.raw)
+    }
+}
+
+fn push_message_state(message: &ApiMessage) -> PushMessageState {
+    PushMessageState {
+        unread: message.label_ids.iter().any(|label| label == "UNREAD"),
+        trash: message.label_ids.iter().any(|label| label == "TRASH"),
     }
 }
 
@@ -837,6 +975,9 @@ mod tests {
             Operation::Thread,
             Operation::Attachment,
             Operation::RawMessage,
+            Operation::PushState,
+            Operation::MarkRead,
+            Operation::Trash,
         ] {
             assert!(
                 operation
@@ -1005,5 +1146,128 @@ mod tests {
         let requests = server.join().unwrap();
         assert!(requests[1].contains("pageToken=next"));
         assert!(requests[2].contains("threads/t?format=full"));
+    }
+
+    #[test]
+    fn gmail_push_uses_only_message_state_modify_and_trash_endpoints() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let responses = [
+                r#"{"id":"m","threadId":"t","labelIds":["UNREAD"]}"#,
+                r#"{"id":"m","threadId":"t","labelIds":[]}"#,
+                r#"{"id":"m","threadId":"t","labelIds":["TRASH"]}"#,
+            ];
+            let mut requests = Vec::new();
+            for body in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                let mut content_length = 0;
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).unwrap();
+                    if header == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:")
+                    {
+                        content_length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut request_body = vec![0; content_length];
+                reader.read_exact(&mut request_body).unwrap();
+                requests.push((request, String::from_utf8(request_body).unwrap()));
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+            requests
+        });
+        let client = GmailClient::new("token", base).unwrap();
+        assert!(client.push_state("m").unwrap().unwrap().unread);
+        assert!(!client.mark_read("m").unwrap().unread);
+        assert!(client.trash("m").unwrap().trash);
+        let requests = server.join().unwrap();
+        assert!(
+            requests[0]
+                .0
+                .starts_with("GET /gmail/v1/users/me/messages/m?")
+        );
+        assert!(
+            requests[1]
+                .0
+                .starts_with("POST /gmail/v1/users/me/messages/m/modify ")
+        );
+        assert_eq!(requests[1].1, r#"{"removeLabelIds":["UNREAD"]}"#);
+        assert!(
+            requests[2]
+                .0
+                .starts_with("POST /gmail/v1/users/me/messages/m/trash ")
+        );
+    }
+
+    #[test]
+    fn gmail_push_maps_missing_and_retries_rate_limits() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            for (status, body) in [
+                ("404 Not Found", ""),
+                ("429 Too Many Requests", ""),
+                ("200 OK", r#"{"id":"m","threadId":"t","labelIds":[]}"#),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                write!(stream, "HTTP/1.1 {status}\r\nRetry-After: 0\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let client = GmailClient::new("token", base).unwrap();
+        assert!(client.push_state("missing").unwrap().is_none());
+        assert!(!client.mark_read("m").unwrap().unread);
+        assert_eq!(client.retries(), 1);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn gmail_push_maps_authentication_failure_clearly() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        });
+        let client = GmailClient::new("token", base).unwrap();
+        let error = client.trash("m").unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<ProviderError>()
+                .is_some_and(|error| error.0 == ProviderErrorKind::Authentication)
+        );
+        assert!(error.to_string().contains("reauthorize"));
+        server.join().unwrap();
     }
 }

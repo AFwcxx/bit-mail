@@ -18,4 +18,5 @@ Critical rules:
 - Fetch an attachment before deciding when it is required for accurate understanding.
 - Do not persist Knowledge without explicit user approval.
 - Do not run `bit-mail push` unless the user explicitly authorizes the push in the current interaction.
+- Never use `bit-mail push --yes` autonomously; it bypasses both normal and threaded-delete confirmation.
 - Never invent a `bit-mail` command; consult `bit-mail help --json`.

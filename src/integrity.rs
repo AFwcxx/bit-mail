@@ -185,6 +185,38 @@ pub fn validate_sensitive_scope(
     })
 }
 
+pub(crate) fn validate_push_cleanup_scope(
+    repository: &Repository,
+    account_id: Uuid,
+    message_ids: &[Uuid],
+) -> Result<Vec<IntegrityMismatch>> {
+    bootstrap_account(repository, account_id)?;
+    let ids = message_ids.iter().map(Uuid::to_string).collect::<Vec<_>>();
+    validate_subset_collect(repository, account_id, |path| push_cleanup_path(path, &ids))
+}
+
+pub(crate) fn commit_push_scope(
+    repository: &Repository,
+    account_id: Uuid,
+    message_ids: &[Uuid],
+) -> Result<()> {
+    let ids = message_ids.iter().map(Uuid::to_string).collect::<Vec<_>>();
+    commit_subset(repository, account_id, |path| push_cleanup_path(path, &ids))
+}
+
+fn push_cleanup_path(path: &str, ids: &[String]) -> bool {
+    path.contains("/threads/")
+        || path.contains("/audit/")
+        || path.contains("/selections/")
+        || path.ends_with("/provider-state.json")
+        || ids.iter().any(|id| {
+            path.contains(&format!("/messages/{id}"))
+                || path.ends_with(&format!("/work-items/{id}.json"))
+                || path.ends_with(&format!("/provider/raw/{id}.eml"))
+                || path.ends_with(&format!("/diagnostics/{id}.json"))
+        })
+}
+
 pub(crate) fn validate_repair_basis(
     repository: &Repository,
     account_id: Uuid,

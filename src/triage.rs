@@ -89,6 +89,12 @@ pub struct Selection {
     pub message_ids: Vec<Uuid>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StagedItem {
+    pub message_id: Uuid,
+    pub state: WorkState,
+}
+
 pub fn work_items(
     repository: &Repository,
     account: &AccountConfig,
@@ -400,6 +406,26 @@ pub(crate) fn staged(repository: &Repository, account_id: Uuid) -> Result<bool> 
         .any(|(_, item)| item.state != WorkState::Pending))
 }
 
+pub(crate) fn staged_items(repository: &Repository, account_id: Uuid) -> Result<Vec<StagedItem>> {
+    Ok(read_work_items(&work_items_dir(repository, account_id))?
+        .into_iter()
+        .filter_map(|(_, item)| {
+            (item.state != WorkState::Pending).then_some(StagedItem {
+                message_id: item.message_id,
+                state: item.state,
+            })
+        })
+        .collect())
+}
+
+pub(crate) fn selection_ids(
+    repository: &Repository,
+    account_id: Uuid,
+    name: &str,
+) -> Result<Vec<Uuid>> {
+    Ok(read_selection(repository, account_id, name)?.message_ids)
+}
+
 pub(crate) fn write_pending(
     repository: &Repository,
     account_id: Uuid,
@@ -428,11 +454,22 @@ pub(crate) fn remove_work_item(
     account_id: Uuid,
     message_id: Uuid,
 ) -> Result<bool> {
+    let removed = remove_work_item_unlocked(repository, account_id, message_id)?;
+    if removed {
+        crate::integrity::commit_account_triage(repository, account_id)?;
+    }
+    Ok(removed)
+}
+
+pub(crate) fn remove_work_item_unlocked(
+    repository: &Repository,
+    account_id: Uuid,
+    message_id: Uuid,
+) -> Result<bool> {
     let path = work_items_dir(repository, account_id).join(format!("{message_id}.json"));
     match fs::remove_file(path) {
         Ok(()) => {
             prune_selection_member(repository, account_id, message_id)?;
-            crate::integrity::commit_account_triage(repository, account_id)?;
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -501,8 +538,12 @@ fn read_work_items(directory: &Path) -> Result<Vec<(PathBuf, WorkItem)>> {
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
         .map(|path| {
             let item: WorkItem = serde_json::from_slice(&fs::read(&path)?)?;
-            if item.schema_version != SCHEMA_VERSION {
-                return Err(error("unsupported work-item schema"));
+            let id = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .and_then(|value| value.parse::<Uuid>().ok());
+            if item.schema_version != SCHEMA_VERSION || id != Some(item.message_id) {
+                return Err(error("invalid work-item schema or identity"));
             }
             Ok((path, item))
         })

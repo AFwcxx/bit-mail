@@ -133,6 +133,28 @@ pub fn gc(repository: &Repository, account: &AccountConfig, dry_run: bool) -> Re
     } else {
         crate::integrity::prepare_account(repository, account.id)?;
     }
+    let report = gc_unlocked(repository, account, dry_run, true, None)?;
+    if !dry_run {
+        crate::integrity::commit_account(repository, account.id)?;
+    }
+    Ok(report)
+}
+
+pub(crate) fn gc_after_push_unlocked(
+    repository: &Repository,
+    account: &AccountConfig,
+    candidates: &HashSet<Uuid>,
+) -> Result<GcReport> {
+    gc_unlocked(repository, account, false, false, Some(candidates))
+}
+
+fn gc_unlocked(
+    repository: &Repository,
+    account: &AccountConfig,
+    dry_run: bool,
+    audit_gc: bool,
+    candidates: Option<&HashSet<Uuid>>,
+) -> Result<GcReport> {
     let account_root = account_dir(repository, account.id);
     let work = uuid_filenames(&account_root.join("work-items"))?;
     let mut manifests = Vec::new();
@@ -141,7 +163,7 @@ pub fn gc(repository: &Repository, account: &AccountConfig, dry_run: bool) -> Re
         let manifest: ThreadManifest = serde_json::from_slice(&fs::read(&path)?)?;
         if manifest.messages.iter().any(|id| work.contains(id)) {
             reachable.extend(&manifest.messages);
-        } else {
+        } else if candidates.is_none_or(|ids| manifest.messages.iter().any(|id| ids.contains(id))) {
             manifests.push(path);
         }
     }
@@ -150,6 +172,9 @@ pub fn gc(repository: &Repository, account: &AccountConfig, dry_run: bool) -> Re
     cached.extend(uuid_files(&account_root.join("provider/raw"), "eml")?);
     cached.extend(uuid_files(&account_root.join("diagnostics"), "json")?);
     let mut messages = cached.difference(&reachable).copied().collect::<Vec<_>>();
+    if let Some(candidates) = candidates {
+        messages.retain(|id| candidates.contains(id));
+    }
     messages.sort_unstable();
     messages.dedup();
     let report = GcReport {
@@ -169,18 +194,19 @@ pub fn gc(repository: &Repository, account: &AccountConfig, dry_run: bool) -> Re
     }
     triage::prune_selection_members_unlocked(repository, account.id, &messages)?;
     CanonicalStore::new(repository, account)?.rebuild_index_unlocked()?;
-    audit::append(
-        &account_root.join("audit"),
-        "gc",
-        Details {
-            account_id: Some(account.id),
-            message_ids: &messages,
-            selection: None,
-            knowledge_id: None,
-            value: None,
-        },
-    )?;
-    crate::integrity::commit_account(repository, account.id)?;
+    if audit_gc {
+        audit::append(
+            &account_root.join("audit"),
+            "gc",
+            Details {
+                account_id: Some(account.id),
+                message_ids: &messages,
+                selection: None,
+                knowledge_id: None,
+                value: None,
+            },
+        )?;
+    }
     Ok(report)
 }
 

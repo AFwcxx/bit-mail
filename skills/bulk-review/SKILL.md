@@ -21,5 +21,6 @@ Triage large volumes efficiently without teaching the LLM ad-hoc persistence mec
 - Summarize the selection in the conversation; do not invent a general annotation database.
 - Treat threaded deletes as high-risk and review full context.
 - Do not run `push` without explicit current user authorization.
+- Never use `push --yes` autonomously, especially for threaded deletes.
 
 Selections are live working sets, not historical archives. Resolved members are pruned; historical operations belong in audit.
