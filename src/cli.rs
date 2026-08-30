@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub account: Option<String>,
 
+    /// Emit content-redacted operational diagnostics.
+    #[arg(long, global = true)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -30,6 +34,8 @@ pub enum Command {
         #[arg(long, required = true)]
         json: bool,
     },
+    /// Diagnose repository, account, security, and provider health.
+    Doctor(DoctorArgs),
     /// Establish the repository integrity baseline for a pre-M007 repository.
     MigrateIntegrity,
     /// Connect or reauthorize a Gmail account.
@@ -78,6 +84,36 @@ pub enum Command {
     Gc(GcArgs),
     /// Manage disposable provider cache.
     Cache(CacheArgs),
+    /// Manage the disposable structural index.
+    Index(IndexArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Diagnose every configured account.
+    #[arg(long)]
+    pub all_accounts: bool,
+    /// Validate every integrity-covered byte in the repository.
+    #[arg(long)]
+    pub full: bool,
+    /// Explicitly perform read-only Gmail authorization probes.
+    #[arg(long)]
+    pub online: bool,
+    /// Emit the stable machine-readable diagnostic report.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct IndexArgs {
+    #[command(subcommand)]
+    pub command: IndexCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IndexCommand {
+    /// Atomically rebuild the selected account's disposable index.
+    Rebuild,
 }
 
 #[derive(Debug, Args)]
@@ -335,6 +371,19 @@ mod tests {
         assert!(Cli::try_parse_from(["bit-mail", "repair", &id]).is_ok());
         assert!(Cli::try_parse_from(["bit-mail", "gc", "--dry-run"]).is_ok());
         assert!(Cli::try_parse_from(["bit-mail", "cache", "rebuild"]).is_ok());
+        assert!(Cli::try_parse_from(["bit-mail", "index", "rebuild"]).is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "bit-mail",
+                "doctor",
+                "--all-accounts",
+                "--full",
+                "--online",
+                "--json",
+                "--verbose",
+            ])
+            .is_ok()
+        );
         assert!(Cli::try_parse_from(["bit-mail", "migrate-integrity"]).is_ok());
         Cli::command().debug_assert();
     }

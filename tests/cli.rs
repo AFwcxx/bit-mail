@@ -61,6 +61,82 @@ fn init_and_config_work_without_provider_setup() {
 }
 
 #[test]
+fn doctor_reports_repository_health_without_network_or_accounts() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    assert!(
+        common::bit_mail()
+            .current_dir(directory.path())
+            .arg("init")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let output = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["doctor", "--json"])
+        .output()
+        .expect("doctor must start");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["status"], "warning");
+    assert!(
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| { check["code"] == "account.selection" && check["status"] == "warning" })
+    );
+    let conflict = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["--account", "personal", "doctor", "--all-accounts"])
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    assert!(String::from_utf8_lossy(&conflict.stderr).contains("cannot be used"));
+}
+
+#[test]
+fn doctor_localizes_runtime_integrity_failure_without_overwriting_it() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    assert!(
+        common::bit_mail()
+            .current_dir(directory.path())
+            .arg("init")
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(
+        directory.path().join("AGENTS.md"),
+        "sentinel-untrusted-content",
+    )
+    .unwrap();
+    let output = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["checks"].as_array().unwrap().iter().any(|check| {
+        check["code"] == "runtime.integrity"
+            && check["status"] == "error"
+            && check["findings"][0]["object"] == "runtime_asset"
+            && check["findings"][0]["kind"] == "modified"
+    }));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("sentinel"));
+    assert_eq!(
+        fs::read_to_string(directory.path().join("AGENTS.md")).unwrap(),
+        "sentinel-untrusted-content"
+    );
+}
+
+#[test]
 fn account_commands_use_uuid_owned_state_without_provider_setup() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let init = common::bit_mail()
@@ -139,6 +215,17 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
             repository.data_dir(personal.id).display(),
             repository.data_dir(work.id).display()
         )
+    );
+
+    let index = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["--account", "personal", "index", "rebuild"])
+        .output()
+        .expect("index rebuild must start");
+    assert!(
+        index.status.success(),
+        "{}",
+        String::from_utf8_lossy(&index.stderr)
     );
 
     let conflicting_scope = common::bit_mail()

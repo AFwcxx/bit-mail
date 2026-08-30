@@ -153,6 +153,7 @@ impl Repository {
         for root in start.ancestors() {
             if root.join(".bit-mail").is_dir() {
                 let mut repository = Self::open(root.to_path_buf())?;
+                repository.recover_runtime_asset_updates()?;
                 repository.synchronize_runtime_assets()?;
                 return Ok(repository);
             }
@@ -164,6 +165,20 @@ impl Repository {
 
     pub fn discover_current() -> Result<Self> {
         Self::discover_from(&env::current_dir()?)
+    }
+
+    pub fn discover_current_for_diagnostics() -> Result<Self> {
+        let start = fs::canonicalize(env::current_dir()?)?;
+        for root in start.ancestors() {
+            if root.join(".bit-mail").is_dir() {
+                let mut repository = Self::open(root.to_path_buf())?;
+                repository.recover_runtime_asset_updates()?;
+                return Ok(repository);
+            }
+        }
+        Err(message(
+            "not inside a bit-mail repository; run `bit-mail init`",
+        ))
     }
 
     pub fn open(root: PathBuf) -> Result<Self> {
@@ -228,6 +243,16 @@ impl Repository {
         let backup = transaction.join("old");
         create_private_dir(&staged.join("skills"))?;
         create_private_dir(&backup)?;
+        fs::copy(
+            current.root.join(".bit-mail/repository.toml"),
+            backup.join("repository.toml"),
+        )?;
+        fs::copy(
+            current.root.join(".bit-mail/integrity/repository.json"),
+            backup.join("integrity-manifest.json"),
+        )?;
+        set_mode(&backup.join("repository.toml"), 0o600)?;
+        set_mode(&backup.join("integrity-manifest.json"), 0o600)?;
         let staged_result = (|| -> Result<()> {
             for (path, bytes) in crate::runtime_assets::ASSETS {
                 if *path != "AGENTS.md" && !path.starts_with("skills/") {
@@ -318,6 +343,75 @@ impl Repository {
             );
         }
         *self = Self::open(self.root.clone())?;
+        Ok(())
+    }
+
+    fn recover_runtime_asset_updates(&mut self) -> Result<()> {
+        let internal = self.root.join(".bit-mail");
+        let mut transactions = fs::read_dir(&internal)?
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                path.file_name()?
+                    .to_string_lossy()
+                    .starts_with("runtime-assets-update-")
+                    .then_some(path)
+            })
+            .collect::<Vec<_>>();
+        transactions.sort();
+        if transactions.is_empty() {
+            return Ok(());
+        }
+        let _lifecycle = self.account_lifecycle_lock()?;
+        for transaction in transactions {
+            if crate::integrity::validate_repository(self).is_ok_and(|v| v.is_empty()) {
+                fs::remove_dir_all(transaction)?;
+                continue;
+            }
+            let backup = transaction.join("old");
+            let old_metadata: RepositoryMetadata = read_toml(&backup.join("repository.toml"))?;
+            for name in ["skills", "AGENTS.md"] {
+                let saved = backup.join(name);
+                let live = self.root.join(name);
+                if !saved.exists() && old_metadata.runtime_assets_version.is_some() {
+                    continue;
+                }
+                if live.is_dir() {
+                    fs::remove_dir_all(&live)?;
+                } else if live.exists() {
+                    fs::remove_file(&live)?;
+                }
+                if saved.exists() {
+                    fs::rename(saved, live)?;
+                }
+            }
+            for (saved, live) in [
+                (
+                    backup.join("repository.toml"),
+                    internal.join("repository.toml"),
+                ),
+                (
+                    backup.join("integrity-manifest.json"),
+                    internal.join("integrity/repository.json"),
+                ),
+            ] {
+                if !saved.is_file() {
+                    return Err(message(
+                        "interrupted runtime asset update has no integrity-valid backup; restore the runtime repository from a trusted filesystem backup",
+                    ));
+                }
+                if live.exists() {
+                    fs::remove_file(&live)?;
+                }
+                fs::rename(saved, live)?;
+            }
+            *self = Self::open(self.root.clone())?;
+            if !crate::integrity::validate_repository(self)?.is_empty() {
+                return Err(message(
+                    "interrupted runtime asset backup failed integrity validation; restore the runtime repository from a trusted filesystem backup",
+                ));
+            }
+            fs::remove_dir_all(transaction)?;
+        }
         Ok(())
     }
 
@@ -1725,5 +1819,102 @@ mod tests {
         }
 
         drop((account_lock, knowledge_lock, lifecycle_lock));
+    }
+
+    #[test]
+    fn discovery_restores_an_interrupted_runtime_asset_update() {
+        let (_directory, repository) = repository();
+        let transaction = repository
+            .root()
+            .join(".bit-mail/runtime-assets-update-interrupted");
+        let backup = transaction.join("old");
+        fs::create_dir_all(&backup).unwrap();
+        fs::copy(
+            repository.root().join(".bit-mail/repository.toml"),
+            backup.join("repository.toml"),
+        )
+        .unwrap();
+        fs::copy(
+            repository
+                .root()
+                .join(".bit-mail/integrity/repository.json"),
+            backup.join("integrity-manifest.json"),
+        )
+        .unwrap();
+        fs::rename(repository.root().join("skills"), backup.join("skills")).unwrap();
+        fs::rename(
+            repository.root().join("AGENTS.md"),
+            backup.join("AGENTS.md"),
+        )
+        .unwrap();
+        fs::create_dir_all(repository.root().join("skills")).unwrap();
+        fs::write(repository.root().join("skills/incomplete"), "incomplete").unwrap();
+        fs::write(repository.root().join("AGENTS.md"), "incomplete").unwrap();
+
+        let recovered = Repository::discover_from(repository.root()).unwrap();
+        assert!(!transaction.exists());
+        assert!(
+            crate::integrity::validate_repository(&recovered)
+                .unwrap()
+                .is_empty()
+        );
+        for (path, bytes) in crate::runtime_assets::ASSETS {
+            assert_eq!(fs::read(recovered.root().join(path)).unwrap(), *bytes);
+        }
+    }
+
+    #[test]
+    fn recovery_removes_partial_assets_from_an_interrupted_legacy_update() {
+        let (_directory, repository) = repository();
+        fs::remove_file(repository.root().join("AGENTS.md")).unwrap();
+        fs::remove_dir_all(repository.root().join("skills")).unwrap();
+        let mut metadata = repository.metadata.clone();
+        metadata.runtime_assets_version = None;
+        write_toml_atomic(
+            &repository.root().join(".bit-mail/repository.toml"),
+            &metadata,
+        )
+        .unwrap();
+        crate::integrity::commit_repository(&repository).unwrap();
+
+        let transaction = repository
+            .root()
+            .join(".bit-mail/runtime-assets-update-interrupted");
+        let backup = transaction.join("old");
+        fs::create_dir_all(&backup).unwrap();
+        fs::copy(
+            repository.root().join(".bit-mail/repository.toml"),
+            backup.join("repository.toml"),
+        )
+        .unwrap();
+        fs::copy(
+            repository
+                .root()
+                .join(".bit-mail/integrity/repository.json"),
+            backup.join("integrity-manifest.json"),
+        )
+        .unwrap();
+        for (path, bytes) in crate::runtime_assets::ASSETS {
+            let path = repository.root().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+
+        let mut interrupted = Repository::open(repository.root().to_path_buf()).unwrap();
+        interrupted.recover_runtime_asset_updates().unwrap();
+        assert!(!interrupted.root().join("AGENTS.md").exists());
+        assert!(!interrupted.root().join("skills").exists());
+        assert!(
+            crate::integrity::validate_repository(&interrupted)
+                .unwrap()
+                .is_empty()
+        );
+
+        let synchronized = Repository::discover_from(repository.root()).unwrap();
+        assert!(
+            crate::integrity::validate_repository(&synchronized)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

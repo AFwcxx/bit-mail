@@ -420,6 +420,93 @@ impl CanonicalStore {
         self.rebuild_index_unlocked()
     }
 
+    pub fn validate_index(&self) -> Result<()> {
+        use rusqlite::OpenFlags;
+
+        let path = self.account_dir().join("index.sqlite");
+        if !path.is_file() {
+            return Err(error("structural index is missing"));
+        }
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let result: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        if version != 1 || result != "ok" {
+            return Err(error("structural index is invalid"));
+        }
+        for (table, expected) in [
+            (
+                "messages",
+                &[
+                    ("message_uuid", "TEXT", false, 1),
+                    ("provider", "TEXT", true, 0),
+                    ("provider_message_id", "TEXT", true, 0),
+                    ("path", "TEXT", true, 0),
+                    ("thread_manifest", "TEXT", false, 0),
+                    ("thread_position", "INTEGER", false, 0),
+                ][..],
+            ),
+            (
+                "attachments",
+                &[
+                    ("message_uuid", "TEXT", true, 1),
+                    ("part_id", "TEXT", true, 2),
+                    ("path", "TEXT", false, 0),
+                    ("local", "INTEGER", true, 0),
+                ][..],
+            ),
+        ] {
+            let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+            let actual = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, bool>(3)?,
+                        row.get::<_, u32>(5)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            if actual.len() != expected.len()
+                || actual.iter().zip(expected).any(
+                    |(
+                        (name, kind, required, key),
+                        (expected_name, expected_kind, expected_required, expected_key),
+                    )| {
+                        name != expected_name
+                            || kind != expected_kind
+                            || required != expected_required
+                            || key != expected_key
+                    },
+                )
+            {
+                return Err(error(format!(
+                    "structural index has invalid {table} schema"
+                )));
+            }
+        }
+        let mut indexes = connection
+            .prepare("SELECT name FROM pragma_index_list('messages') WHERE \"unique\" = 1")?;
+        let indexes = indexes
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let provider_identity_unique = indexes.iter().any(|index| {
+            connection
+                .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
+                .and_then(|mut statement| {
+                    statement
+                        .query_map([index], |row| row.get::<_, String>(0))?
+                        .collect::<std::result::Result<Vec<_>, _>>()
+                })
+                .is_ok_and(|columns| columns == ["provider", "provider_message_id"])
+        });
+        if !provider_identity_unique {
+            return Err(error(
+                "structural index is missing provider identity uniqueness",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn rebuild_index_unlocked(&self) -> Result<()> {
         self.create_layout()?;
         let target = self.account_dir().join("index.sqlite");
@@ -1654,6 +1741,29 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn index_validation_rejects_spoofed_version_and_table_names() {
+        let (_directory, repository, account, store) = store();
+        let path = repository
+            .root()
+            .join(".bit-mail/accounts")
+            .join(account.id.to_string())
+            .join("index.sqlite");
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA user_version = 1;
+                 CREATE TABLE messages (message_uuid TEXT PRIMARY KEY);
+                 CREATE TABLE attachments (message_uuid TEXT, part_id TEXT);",
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(store.validate_index().is_err());
+        store.rebuild_index().unwrap();
+        store.validate_index().unwrap();
     }
 
     #[test]

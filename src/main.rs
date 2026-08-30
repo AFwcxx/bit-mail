@@ -8,7 +8,7 @@ use std::{
 use bit_mail::{
     Result,
     cli::{
-        AccountCommand, AttachmentCommand, CacheCommand, Cli, Command, ConfigCommand,
+        AccountCommand, AttachmentCommand, CacheCommand, Cli, Command, ConfigCommand, IndexCommand,
         KnowledgeCommand, RawCommand, SelectionCommand,
     },
     credentials::{GoogleCredentialRevoker, KeyringStore},
@@ -46,8 +46,15 @@ fn pull_accounts(
 }
 
 fn run() -> Result<()> {
-    tracing_subscriber::fmt().with_target(false).try_init()?;
     let cli = Cli::parse();
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_max_level(if cli.verbose {
+            tracing::Level::DEBUG
+        } else {
+            tracing::Level::INFO
+        })
+        .try_init()?;
     match cli.command {
         None => {
             Cli::command().print_help()?;
@@ -84,6 +91,50 @@ fn run() -> Result<()> {
             );
         }
         Some(Command::Context { json: false }) => unreachable!("--json is required by clap"),
+        Some(Command::Doctor(args)) => {
+            if args.all_accounts && cli.account.is_some() {
+                return Err(
+                    std::io::Error::other("--account cannot be used with --all-accounts").into(),
+                );
+            }
+            let repository = match Repository::discover_current_for_diagnostics() {
+                Ok(repository) => repository,
+                Err(_) => {
+                    let report = bit_mail::diagnostics::repository_failure();
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print!("{}", report.render());
+                    }
+                    return Err(std::io::Error::other("doctor found errors").into());
+                }
+            };
+            let store = KeyringStore::new(repository.id());
+            let report = bit_mail::diagnostics::run(
+                &repository,
+                bit_mail::diagnostics::Options {
+                    account: cli.account.as_deref(),
+                    all_accounts: args.all_accounts,
+                    full: args.full,
+                    online: args.online,
+                },
+                &store,
+                |account| {
+                    use bit_mail::provider::MailProvider;
+                    bit_mail::gmail::authorized_client(&repository, account, &store)?
+                        .current_history_id()
+                        .map(|_| ())
+                },
+            );
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report.render());
+            }
+            if report.failed() {
+                return Err(std::io::Error::other("doctor found errors").into());
+            }
+        }
         Some(Command::MigrateIntegrity) => {
             let repository = Repository::discover_current()?;
             if repository.migrate_integrity()? {
@@ -532,6 +583,16 @@ fn run() -> Result<()> {
                 CacheCommand::Rebuild => {
                     bit_mail::recovery::cache_rebuild(&repository, &account)?;
                     println!("Rebuilt cache for {}", account.alias);
+                }
+            }
+        }
+        Some(Command::Index(args)) => {
+            let repository = Repository::discover_current()?;
+            let account = resolve_account(&repository, cli.account.as_deref())?;
+            match args.command {
+                IndexCommand::Rebuild => {
+                    bit_mail::recovery::index_rebuild(&repository, &account)?;
+                    println!("Rebuilt structural index for {}", account.alias);
                 }
             }
         }

@@ -6,7 +6,7 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-The requirements baseline through harness runtime integration is complete. Diagnostics and hardening is next; progress is tracked under [`docs/milestones/`](docs/milestones/README.md).
+The requirements baseline through diagnostics and hardening is complete. Testing and performance is next; progress is tracked under [`docs/milestones/`](docs/milestones/README.md).
 
 ## Core workflow
 

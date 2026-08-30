@@ -166,6 +166,15 @@ fn behavior(path: &str) -> Option<CommandBehavior> {
             false,
             &[],
         ),
+        "doctor" => policy(
+            AccountScope::SingleOrAllAccounts,
+            true,
+            true,
+            false,
+            true,
+            false,
+            &[],
+        ),
         "migrate-integrity" | "config set" | "account rename" => policy(
             AccountScope::Repository,
             false,
@@ -239,7 +248,7 @@ fn behavior(path: &str) -> Option<CommandBehavior> {
             &[],
         ),
         "stage" | "unstage" | "selection create" | "selection add" | "selection remove"
-        | "selection delete" | "gc" | "cache rebuild" => policy(
+        | "selection delete" | "gc" | "cache rebuild" | "index rebuild" => policy(
             AccountScope::SingleAccount,
             false,
             true,

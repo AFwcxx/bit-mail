@@ -165,6 +165,16 @@ pub fn validate_account(
     )
 }
 
+pub fn validate_repository(repository: &Repository) -> Result<Vec<IntegrityMismatch>> {
+    repository.require_integrity_ready()?;
+    validate_scope(
+        repository,
+        &repository_manifest_path(repository),
+        "bit-mail:repository-state:v1",
+        repository_files(repository)?,
+    )
+}
+
 pub fn validate_sensitive_scope(
     repository: &Repository,
     account_id: Uuid,
@@ -521,8 +531,15 @@ fn write_manifest(path: &Path, manifest: &Manifest) -> Result<()> {
         .parent()
         .ok_or_else(|| std::io::Error::other("integrity path has no parent"))?;
     fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    fs::set_permissions(parent, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
     let temporary = path.with_extension("json.tmp");
     fs::write(&temporary, serde_json::to_vec_pretty(manifest)?)?;
+    #[cfg(unix)]
+    fs::set_permissions(
+        &temporary,
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )?;
     fs::rename(temporary, path)?;
     Ok(())
 }

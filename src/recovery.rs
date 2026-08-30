@@ -38,6 +38,12 @@ pub struct CacheRebuildReport {
     pub account_id: Uuid,
 }
 
+pub fn index_rebuild(repository: &Repository, account: &AccountConfig) -> Result<()> {
+    let _lock = repository.account_lock(account.id)?;
+    crate::integrity::prepare_account(repository, account.id)?;
+    CanonicalStore::new(repository, account)?.rebuild_index_unlocked()
+}
+
 #[derive(Deserialize)]
 struct ThreadManifest {
     messages: Vec<Uuid>,
@@ -239,6 +245,11 @@ pub fn cache_rebuild(
     remove_file(&account_root.join("provider-state.json"))?;
     remove_file(&account_root.join("index.sqlite"))?;
     fs::create_dir_all(repository.data_dir(account.id))?;
+    #[cfg(unix)]
+    fs::set_permissions(
+        repository.data_dir(account.id),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )?;
     CanonicalStore::new(repository, account)?.rebuild_index_unlocked()?;
     audit::append(
         &account_root.join("audit"),

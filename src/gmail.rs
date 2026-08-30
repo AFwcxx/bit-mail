@@ -195,8 +195,11 @@ impl GmailClient {
         url.query_pairs_mut()
             .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
         let operation = operation.label();
+        let request_id = uuid::Uuid::new_v4();
+        let started = Instant::now();
         for attempt in 0..=3 {
             tracing::debug!(
+                request_id = %request_id,
                 provider = "gmail",
                 operation,
                 attempt = attempt + 1,
@@ -209,20 +212,31 @@ impl GmailClient {
                 .send();
             match sent {
                 Ok(response) if response.status().is_success() => {
-                    return response.json().map_err(|_| {
-                        ProviderError(
-                            ProviderErrorKind::Permanent,
-                            "Gmail returned malformed JSON",
-                        )
-                        .into()
-                    });
+                    let status = response.status().as_u16();
+                    return match response.json() {
+                        Ok(value) => {
+                            tracing::debug!(request_id = %request_id, provider = "gmail", operation, elapsed_ms = started.elapsed().as_millis(), status, "provider request completed");
+                            Ok(value)
+                        }
+                        Err(_) => {
+                            tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "malformed_json", elapsed_ms = started.elapsed().as_millis(), status, "provider request failed");
+                            Err(ProviderError(
+                                ProviderErrorKind::Permanent,
+                                "Gmail returned malformed JSON",
+                            )
+                            .into())
+                        }
+                    };
                 }
                 Ok(response)
                     if response.status().as_u16() == 401 || response.status().as_u16() == 403 =>
                 {
                     tracing::warn!(
+                        request_id = %request_id,
                         provider = "gmail",
                         operation,
+                        error_class = "authentication",
+                        elapsed_ms = started.elapsed().as_millis(),
                         status = response.status().as_u16(),
                         "provider request failed"
                     );
@@ -234,8 +248,11 @@ impl GmailClient {
                 }
                 Ok(response) if response.status().as_u16() == 404 => {
                     tracing::warn!(
+                        request_id = %request_id,
                         provider = "gmail",
                         operation,
+                        error_class = "missing",
+                        elapsed_ms = started.elapsed().as_millis(),
                         status = 404,
                         "provider request failed"
                     );
@@ -246,8 +263,11 @@ impl GmailClient {
                 {
                     if attempt == 3 {
                         tracing::warn!(
+                            request_id = %request_id,
                             provider = "gmail",
                             operation,
+                            error_class = "retry_exhausted",
+                            elapsed_ms = started.elapsed().as_millis(),
                             status = response.status().as_u16(),
                             "provider request retry limit exceeded"
                         );
@@ -261,8 +281,11 @@ impl GmailClient {
                         .unwrap_or(Duration::from_millis(250 << attempt));
                     self.retries.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(
+                        request_id = %request_id,
                         provider = "gmail",
                         operation,
+                        error_class = "retryable_status",
+                        elapsed_ms = started.elapsed().as_millis(),
                         status = response.status().as_u16(),
                         attempt = attempt + 1,
                         "provider request retry"
@@ -271,8 +294,11 @@ impl GmailClient {
                 }
                 Ok(response) => {
                     tracing::warn!(
+                        request_id = %request_id,
                         provider = "gmail",
                         operation,
+                        error_class = "permanent_status",
+                        elapsed_ms = started.elapsed().as_millis(),
                         status = response.status().as_u16(),
                         "provider request failed"
                     );
@@ -285,15 +311,18 @@ impl GmailClient {
                 Err(_) if attempt < 3 => {
                     self.retries.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(
+                        request_id = %request_id,
                         provider = "gmail",
                         operation,
+                        error_class = "transport",
+                        elapsed_ms = started.elapsed().as_millis(),
                         attempt = attempt + 1,
                         "provider transport retry"
                     );
                     std::thread::sleep(Duration::from_millis(250 << attempt));
                 }
                 Err(_) => {
-                    tracing::warn!(provider = "gmail", operation, "provider transport failed");
+                    tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "transport", elapsed_ms = started.elapsed().as_millis(), "provider transport failed");
                     return Err(ProviderError(
                         ProviderErrorKind::Permanent,
                         "Gmail transport failed",
@@ -313,7 +342,10 @@ impl GmailClient {
     ) -> Result<T> {
         let url = Url::parse(&format!("{}/gmail/v1/users/me/{path}", self.base_url))?;
         let operation = operation.label();
+        let request_id = uuid::Uuid::new_v4();
+        let started = Instant::now();
         for attempt in 0..=3 {
+            tracing::debug!(request_id = %request_id, provider = "gmail", operation, attempt = attempt + 1, "provider request");
             let sent = self
                 .http
                 .post(url.clone())
@@ -322,15 +354,24 @@ impl GmailClient {
                 .send();
             match sent {
                 Ok(response) if response.status().is_success() => {
-                    return response.json().map_err(|_| {
-                        ProviderError(
-                            ProviderErrorKind::Permanent,
-                            "Gmail returned malformed JSON",
-                        )
-                        .into()
-                    });
+                    let status = response.status().as_u16();
+                    return match response.json() {
+                        Ok(value) => {
+                            tracing::debug!(request_id = %request_id, provider = "gmail", operation, elapsed_ms = started.elapsed().as_millis(), status, "provider request completed");
+                            Ok(value)
+                        }
+                        Err(_) => {
+                            tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "malformed_json", elapsed_ms = started.elapsed().as_millis(), status, "provider request failed");
+                            Err(ProviderError(
+                                ProviderErrorKind::Permanent,
+                                "Gmail returned malformed JSON",
+                            )
+                            .into())
+                        }
+                    };
                 }
                 Ok(response) if matches!(response.status().as_u16(), 401 | 403) => {
+                    tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "authentication", elapsed_ms = started.elapsed().as_millis(), "provider request failed");
                     return Err(ProviderError(
                         ProviderErrorKind::Authentication,
                         "Gmail authorization failed; reauthorize the account",
@@ -338,6 +379,7 @@ impl GmailClient {
                     .into());
                 }
                 Ok(response) if response.status().as_u16() == 404 => {
+                    tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "missing", elapsed_ms = started.elapsed().as_millis(), "provider request failed");
                     return Err(ProviderError(
                         ProviderErrorKind::Missing,
                         "Gmail object is unavailable",
@@ -348,6 +390,7 @@ impl GmailClient {
                     if response.status().as_u16() == 429 || response.status().is_server_error() =>
                 {
                     if attempt == 3 {
+                        tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "retry_exhausted", elapsed_ms = started.elapsed().as_millis(), status = response.status().as_u16(), "provider request retry limit exceeded");
                         break;
                     }
                     let delay = response
@@ -358,14 +401,18 @@ impl GmailClient {
                         .unwrap_or(Duration::from_millis(250 << attempt));
                     self.retries.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(
+                        request_id = %request_id,
                         provider = "gmail",
                         operation,
+                        error_class = "retryable_status",
+                        elapsed_ms = started.elapsed().as_millis(),
                         attempt = attempt + 1,
                         "provider request retry"
                     );
                     std::thread::sleep(delay.min(Duration::from_secs(30)));
                 }
                 Ok(_) => {
+                    tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "permanent_status", elapsed_ms = started.elapsed().as_millis(), "provider request failed");
                     return Err(ProviderError(
                         ProviderErrorKind::Permanent,
                         "Gmail request failed",
@@ -374,9 +421,11 @@ impl GmailClient {
                 }
                 Err(_) if attempt < 3 => {
                     self.retries.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "transport", elapsed_ms = started.elapsed().as_millis(), attempt = attempt + 1, "provider transport retry");
                     std::thread::sleep(Duration::from_millis(250 << attempt));
                 }
                 Err(_) => {
+                    tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "transport", elapsed_ms = started.elapsed().as_millis(), "provider transport failed");
                     return Err(ProviderError(
                         ProviderErrorKind::Permanent,
                         "Gmail transport failed",
@@ -963,7 +1012,31 @@ fn parse_callback(mut stream: TcpStream, expected_state: &str) -> Result<Callbac
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{net::SocketAddr, thread};
+    use std::{
+        net::SocketAddr,
+        sync::{Arc, Mutex},
+        thread,
+    };
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
 
     #[test]
     fn request_log_operations_cannot_include_provider_identifiers() {
@@ -986,6 +1059,93 @@ mod tests {
                     .all(|character| character.is_ascii_lowercase() || character == ' '),
                 "request diagnostics must use fixed content-free labels"
             );
+        }
+    }
+
+    #[test]
+    fn verbose_provider_errors_have_operational_fields_without_secrets() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        });
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(logs.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let client = GmailClient::new("sentinel-refresh-token", base).unwrap();
+            client.message_state("sentinel-provider-id").unwrap_err();
+        });
+        server.join().unwrap();
+        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        for field in ["request_id", "error_class", "elapsed_ms"] {
+            assert!(
+                output.contains(field),
+                "missing log field {field}: {output}"
+            );
+        }
+        for secret in ["sentinel-refresh-token", "sentinel-provider-id"] {
+            assert!(!output.contains(secret), "verbose logs leaked {secret}");
+        }
+    }
+
+    #[test]
+    fn verbose_logs_redact_malformed_and_exhausted_requests() {
+        for (responses, invoke, error_class) in [
+            (vec![("200 OK", "not-json")], false, "malformed_json"),
+            (
+                vec![("500 Internal Server Error", ""); 4],
+                true,
+                "retry_exhausted",
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let server = thread::spawn(move || {
+                for (status, body) in responses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = String::new();
+                    BufReader::new(stream.try_clone().unwrap())
+                        .read_line(&mut request)
+                        .unwrap();
+                    write!(stream, "HTTP/1.1 {status}\r\nRetry-After: 0\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                }
+            });
+            let logs = LogBuffer::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::DEBUG)
+                .with_writer(logs.clone())
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                let client = GmailClient::new("sentinel-token", base).unwrap();
+                if invoke {
+                    client.trash("sentinel-id").unwrap_err();
+                } else {
+                    client.message_state("sentinel-id").unwrap_err();
+                }
+            });
+            server.join().unwrap();
+            let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+            assert!(
+                output.contains(error_class),
+                "missing {error_class}: {output}"
+            );
+            for secret in ["sentinel-token", "sentinel-id"] {
+                assert!(!output.contains(secret));
+            }
         }
     }
 

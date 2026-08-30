@@ -29,7 +29,7 @@ Milestones are the execution boundary for development sessions, worktrees, and p
 | M007 | [Integrity and recovery](007-integrity-recovery.md) | **Complete** | BLAKE3 Merkle integrity, repair, GC, cache rebuild |
 | M008 | [Push engine](008-push-engine.md) | **Complete** | Reviewed/idempotent Gmail read/Trash commit path |
 | M009 | [Harness runtime integration](009-harness-runtime-integration.md) | **Complete** | Embedded templates, skills, context/help JSON contracts |
-| M010 | [Diagnostics and hardening](010-diagnostics-hardening.md) | Planned | `doctor`, permissions, Git tracking checks, robust diagnostics |
+| M010 | [Diagnostics and hardening](010-diagnostics-hardening.md) | **Complete** | `doctor`, permissions, Git tracking checks, robust diagnostics |
 | M011 | [Testing and performance](011-testing-performance.md) | Planned | Provider contract tests, live opt-in tests, benchmarks, optimization |
 | M012 | [v0.1 release](012-v0.1-release.md) | Planned | Docs polish, MSRV, release binaries, public release readiness |
 

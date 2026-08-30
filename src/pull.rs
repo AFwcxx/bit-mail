@@ -380,6 +380,10 @@ fn read_state(path: &Path) -> Result<ProviderState> {
     }
     Ok(state)
 }
+
+pub fn validate_provider_state(repository: &Repository, account_id: Uuid) -> Result<()> {
+    read_state(&Paths::new(repository, account_id).provider_state).map(|_| ())
+}
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
     let temporary = path.with_extension("json.tmp");
     fs::write(&temporary, serde_json::to_vec_pretty(value)?)?;

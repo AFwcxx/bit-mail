@@ -449,11 +449,32 @@ The next `pull` repopulates from Gmail while reusing stable message UUIDs.
 bit-mail doctor
 bit-mail doctor --all-accounts
 bit-mail doctor --full
+bit-mail doctor --online
+bit-mail doctor --json
 ```
 
 `doctor --full` may be expensive because it reads and validates all integrity-covered bytes.
 
-Diagnostics are content-redacted by default.
+Normal diagnostics are offline. `--online` explicitly refreshes Gmail
+authorization and performs a read-only provider probe. `--json` is versioned,
+deterministically ordered, and content-redacted. Errors return non-zero; warnings
+alone remain successful.
+
+Checks cover repository/account configuration, credentials, provider cursors,
+SQLite, locks, permissions, Git exposure, runtime assets, and integrity. Rebuild
+a damaged disposable index after canonical integrity passes:
+
+```bash
+bit-mail index rebuild
+```
+
+Global `--verbose` logs only request IDs, fixed error classes, attempts, and
+timings. Permission findings aggregate private paths and use one fixed recursive
+remediation command; they also warn that mode bits cannot verify filesystem
+ACLs. Stale-lock findings expose commands only for recognized managed lock
+paths; remove a lock only after confirming its recorded PID is absent.
+Interrupted runtime asset updates automatically restore the last
+integrity-valid set.
 
 ## 16. Machine-readable CLI discovery
 

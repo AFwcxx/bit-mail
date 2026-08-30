@@ -7,6 +7,7 @@ mod audit;
 pub mod cli;
 pub mod connect;
 pub mod credentials;
+pub mod diagnostics;
 pub mod gmail;
 pub mod harness;
 pub mod integrity;
