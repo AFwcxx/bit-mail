@@ -31,7 +31,7 @@ Milestones are the execution boundary for development sessions, worktrees, and p
 | M009 | [Harness runtime integration](009-harness-runtime-integration.md) | **Complete** | Embedded templates, skills, context/help JSON contracts |
 | M010 | [Diagnostics and hardening](010-diagnostics-hardening.md) | **Complete** | `doctor`, permissions, Git tracking checks, robust diagnostics |
 | M011 | [Testing and performance](011-testing-performance.md) | **Complete** | Provider contract tests, live opt-in tests, benchmarks, optimization |
-| M012 | [v0.1 release](012-v0.1-release.md) | **Complete** | Docs polish, MSRV, release binaries, public release readiness |
+| M012 | [v0.1 release](012-v0.1-release.md) | **Release-ready** | Docs polish, MSRV, release binaries, public release readiness |
 
 ## Dependency shape
 

@@ -6,8 +6,8 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-v0.1.0 is the first public release. Release verification and later progress are
-tracked under [`docs/milestones/`](docs/milestones/README.md).
+The v0.1.0 implementation is release-ready. Publication and hosted verification
+are tracked under [`docs/milestones/`](docs/milestones/README.md).
 
 ## Install and quick start
 
