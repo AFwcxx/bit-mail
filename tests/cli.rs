@@ -183,7 +183,8 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
         .expect("bit-mail init must start");
     assert!(init.status.success());
 
-    let repository = Repository::open(directory.path().to_path_buf()).expect("repository");
+    let repository =
+        Repository::open(fs::canonicalize(directory.path()).unwrap()).expect("repository");
     let personal = repository
         .create_account(NewAccount {
             alias: "personal",
@@ -227,8 +228,8 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
         .expect("explicit path must start");
     assert!(explicit_path.status.success());
     assert_eq!(
-        fs::canonicalize(String::from_utf8_lossy(&explicit_path.stdout).trim()).unwrap(),
-        fs::canonicalize(repository.data_dir(personal.id)).unwrap()
+        String::from_utf8_lossy(&explicit_path.stdout).trim(),
+        repository.data_dir(personal.id).display().to_string()
     );
 
     let inferred_path = common::bit_mail()
