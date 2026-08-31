@@ -227,8 +227,8 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
         .expect("explicit path must start");
     assert!(explicit_path.status.success());
     assert_eq!(
-        String::from_utf8_lossy(&explicit_path.stdout).trim(),
-        repository.data_dir(personal.id).display().to_string()
+        fs::canonicalize(String::from_utf8_lossy(&explicit_path.stdout).trim()).unwrap(),
+        fs::canonicalize(repository.data_dir(personal.id)).unwrap()
     );
 
     let inferred_path = common::bit_mail()
