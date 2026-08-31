@@ -83,7 +83,7 @@ awk -v version="$next" '
 ' Cargo.lock || fail "Cargo.lock does not contain bit-mail $next"
 
 expected_files=$'Cargo.lock\nCargo.toml\nREADME.md\ndocs/release.md\ndocs/user-manual.md'
-[[ "$(git diff --name-only | sort)" == "$expected_files" ]] || fail "unexpected files changed during release preparation"
+[[ "$(git diff --name-only | LC_ALL=C sort)" == "$expected_files" ]] || fail "unexpected files changed during release preparation"
 git diff --check
 cargo +1.88.0 test --locked --all-features
 
