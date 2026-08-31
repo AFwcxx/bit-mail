@@ -94,5 +94,5 @@ if ! git tag -s -m "bit-mail $next_tag" "$next_tag"; then
     fail "tag signing failed; the release commit was undone and its edits were kept"
 fi
 
-echo "Created signed commit and tag $next_tag locally; nothing was pushed."
-echo "Next: push main and $next_tag, verify the hosted release, then mark README as released."
+git push --atomic origin main "$next_tag"
+echo "Published signed commit and tag $next_tag; verify the hosted release, then mark README as released."

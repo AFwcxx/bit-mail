@@ -16,13 +16,15 @@ Download the archive for your platform plus `SHA256SUMS` from the
 the tagged source with Rust 1.88 or newer:
 
 ```bash
-cargo install --locked --git https://github.com/AFwcxx/bit-mail --tag v0.1.1 bit-mail
+cargo install --locked --force --git https://github.com/AFwcxx/bit-mail --tag v0.1.1 bit-mail
 mkdir ~/mail-triage
 cd ~/mail-triage
 bit-mail init
 bit-mail connect
 bit-mail pull
 ```
+
+Rerun the `cargo install` command to upgrade an existing installation.
 
 Continue with [`docs/user-manual.md`](docs/user-manual.md); Gmail OAuth setup is
 documented in [`docs/setup/gmail.md`](docs/setup/gmail.md).
