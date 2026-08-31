@@ -6,8 +6,8 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-The v0.1.0 implementation is release-ready. Publication and hosted verification
-are tracked under [`docs/milestones/`](docs/milestones/README.md).
+v0.1.0 is released for Linux and macOS. Release verification is tracked under
+[`docs/milestones/`](docs/milestones/README.md).
 
 ## Install and quick start
 
@@ -54,7 +54,7 @@ bit-mail unstage <message-id>
 bit-mail push
 ```
 
-This core workflow is implemented; v0.1 release packaging and final polish remain.
+This core workflow and v0.1 release packaging are implemented.
 
 ## Architectural invariants
 
