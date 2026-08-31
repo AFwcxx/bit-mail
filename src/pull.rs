@@ -119,6 +119,26 @@ pub fn pull_account<F>(
 where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
 {
+    pull_account_with_progress(
+        repository,
+        account,
+        options,
+        provider,
+        &crate::progress::none,
+    )
+}
+
+pub fn pull_account_with_progress<F>(
+    repository: &Repository,
+    account: &AccountConfig,
+    options: PullOptions,
+    provider: F,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<AccountReport>
+where
+    F: FnOnce() -> Result<Box<dyn MailProvider>>,
+{
+    crate::progress::phase(progress, format!("Preparing {}", account.alias));
     let _lock = repository.account_lock(account.id)?;
     crate::integrity::prepare_account(repository, account.id)?;
     let paths = Paths::new(repository, account.id);
@@ -128,6 +148,10 @@ where
         result.retries = Some(0);
         return Ok(result);
     }
+    crate::progress::phase(
+        progress,
+        format!("Checking Gmail changes for {}", account.alias),
+    );
     let provider = provider()?;
     let store = CanonicalStore::new(repository, account)?;
     let mut state = read_state(&paths.provider_state)?;
@@ -190,6 +214,10 @@ where
         }
     }
 
+    crate::progress::phase(
+        progress,
+        format!("Finding unread mail for {}", account.alias),
+    );
     let unlimited = options.all || fallback;
     let mut remaining = if unlimited { u32::MAX } else { options.limit };
     let mut page = if unlimited {
@@ -222,12 +250,21 @@ where
         page.clone_from(&next_backlog);
     }
 
+    crate::progress::phase(
+        progress,
+        format!(
+            "Fetching {} thread(s) for {}",
+            thread_ids.len(),
+            account.alias
+        ),
+    );
     let fetched = fetch_threads(provider.as_ref(), thread_ids.iter().cloned().collect());
     let mut result = report(account, Outcome::Success);
     result.seeds = seed_ids.len();
     result.threads = fetched.len();
     result.removed_work_items = removed;
     let mut active = HashSet::new();
+    crate::progress::phase(progress, format!("Saving messages for {}", account.alias));
     for fetched in fetched {
         match fetched {
             Ok(thread) => {
@@ -267,6 +304,7 @@ where
     } else {
         result.outcome = Outcome::Failed;
     }
+    crate::progress::phase(progress, format!("Finalizing {}", account.alias));
     crate::integrity::commit_account(repository, account.id)?;
     Ok(result)
 }
@@ -291,14 +329,38 @@ pub fn fetch_attachment<F>(
 where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
 {
+    fetch_attachment_with_progress(
+        repository,
+        account,
+        message_id,
+        part_id,
+        provider,
+        &crate::progress::none,
+    )
+}
+
+pub fn fetch_attachment_with_progress<F>(
+    repository: &Repository,
+    account: &AccountConfig,
+    message_id: Uuid,
+    part_id: &str,
+    provider: F,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<PathBuf>
+where
+    F: FnOnce() -> Result<Box<dyn MailProvider>>,
+{
+    crate::progress::phase(progress, "Checking attachment cache");
     let _lock = repository.account_lock(account.id)?;
     crate::integrity::prepare_account(repository, account.id)?;
     let store = CanonicalStore::new(repository, account)?;
     match store.attachment_state(message_id, part_id)? {
         AttachmentState::Local { path } => Ok(path),
         AttachmentState::Remote(remote) => {
+            crate::progress::phase(progress, "Downloading attachment");
             let provider_id = store.provider_message_id(message_id)?;
             let bytes = provider()?.attachment(&provider_id, &remote.provider_attachment_id)?;
+            crate::progress::phase(progress, "Saving attachment");
             let path = store.persist_attachment_unlocked(message_id, part_id, &bytes)?;
             crate::integrity::commit_account(repository, account.id)?;
             Ok(path)
@@ -315,6 +377,26 @@ pub fn fetch_raw<F>(
 where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
 {
+    fetch_raw_with_progress(
+        repository,
+        account,
+        message_id,
+        provider,
+        &crate::progress::none,
+    )
+}
+
+pub fn fetch_raw_with_progress<F>(
+    repository: &Repository,
+    account: &AccountConfig,
+    message_id: Uuid,
+    provider: F,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<PathBuf>
+where
+    F: FnOnce() -> Result<Box<dyn MailProvider>>,
+{
+    crate::progress::phase(progress, "Checking raw-message cache");
     let _lock = repository.account_lock(account.id)?;
     crate::integrity::prepare_account(repository, account.id)?;
     let store = CanonicalStore::new(repository, account)?;
@@ -323,7 +405,9 @@ where
         return Ok(path);
     }
     let provider_id = store.provider_message_id(message_id)?;
+    crate::progress::phase(progress, "Downloading raw message");
     let bytes = provider()?.raw(&provider_id)?;
+    crate::progress::phase(progress, "Saving raw message");
     let path = store.persist_raw_unlocked(message_id, &bytes)?;
     crate::integrity::commit_account(repository, account.id)?;
     Ok(path)
@@ -438,7 +522,7 @@ mod tests {
             TransferEncoding,
         },
     };
-    use std::{collections::BTreeMap, sync::Mutex, time::Duration};
+    use std::{cell::RefCell, collections::BTreeMap, sync::Mutex, time::Duration};
 
     struct Fake {
         pages: Mutex<Vec<Option<String>>>,
@@ -945,7 +1029,8 @@ mod tests {
         )
         .unwrap();
         crate::integrity::commit_account(&repository, account.id).unwrap();
-        let report = pull_account(
+        let events = RefCell::new(Vec::new());
+        let report = pull_account_with_progress(
             &repository,
             &account,
             PullOptions {
@@ -953,11 +1038,16 @@ mod tests {
                 all: false,
             },
             || panic!("provider must not be constructed"),
+            &|event| events.borrow_mut().push(event),
         )
         .unwrap();
         assert!(matches!(report.outcome, Outcome::Blocked));
         assert_eq!(report.retries, Some(0));
         assert_eq!(report.backlog_remaining, None);
+        assert_eq!(
+            events.into_inner(),
+            [crate::progress::Event::Phase("Preparing mail".into())]
+        );
     }
 
     #[test]

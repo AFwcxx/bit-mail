@@ -39,8 +39,18 @@ pub struct CacheRebuildReport {
 }
 
 pub fn index_rebuild(repository: &Repository, account: &AccountConfig) -> Result<()> {
+    index_rebuild_with_progress(repository, account, &crate::progress::none)
+}
+
+pub fn index_rebuild_with_progress(
+    repository: &Repository,
+    account: &AccountConfig,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<()> {
+    crate::progress::phase(progress, "Validating account data");
     let _lock = repository.account_lock(account.id)?;
     crate::integrity::prepare_account(repository, account.id)?;
+    crate::progress::phase(progress, "Rebuilding structural index");
     CanonicalStore::new(repository, account)?.rebuild_index_unlocked()
 }
 
@@ -63,6 +73,26 @@ pub fn repair<F>(
 where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
 {
+    repair_with_progress(
+        repository,
+        account,
+        message_id,
+        provider,
+        &crate::progress::none,
+    )
+}
+
+pub fn repair_with_progress<F>(
+    repository: &Repository,
+    account: &AccountConfig,
+    message_id: Uuid,
+    provider: F,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<RepairReport>
+where
+    F: FnOnce() -> Result<Box<dyn MailProvider>>,
+{
+    crate::progress::phase(progress, "Checking local message state");
     let _lock = repository.account_lock(account.id)?;
     crate::integrity::bootstrap_account(repository, account.id)?;
     crate::integrity::validate_repair_basis(repository, account.id, message_id)?;
@@ -72,6 +102,7 @@ where
         Err(_) => (vec![message_id], false),
     };
     let provider_id = store.identity_provider_message_id(message_id)?;
+    crate::progress::phase(progress, "Fetching provider thread");
     let provider = provider()?;
     let reference = provider.message_ref(&provider_id)?;
     let thread = provider.thread(&reference.thread_id)?;
@@ -89,6 +120,7 @@ where
                 .join(format!("{message_id}.json")),
         )?;
     }
+    crate::progress::phase(progress, "Rebuilding local thread");
     let ids = store.replace_thread_unlocked(&thread)?;
     for id in affected.iter().filter(|id| !ids.contains(id)) {
         remove_message_cache(repository, account.id, *id)?;
@@ -116,6 +148,7 @@ where
             value: None,
         },
     )?;
+    crate::progress::phase(progress, "Finalizing repaired thread");
     crate::integrity::commit_account(repository, account.id)?;
     Ok(RepairReport {
         schema_version: 1,
@@ -126,6 +159,16 @@ where
 }
 
 pub fn gc(repository: &Repository, account: &AccountConfig, dry_run: bool) -> Result<GcReport> {
+    gc_with_progress(repository, account, dry_run, &crate::progress::none)
+}
+
+pub fn gc_with_progress(
+    repository: &Repository,
+    account: &AccountConfig,
+    dry_run: bool,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<GcReport> {
+    crate::progress::phase(progress, "Scanning provider cache");
     let _lock = repository.account_lock(account.id)?;
     if dry_run {
         let mismatches = crate::integrity::validate_account(repository, account.id)?;
@@ -138,6 +181,9 @@ pub fn gc(repository: &Repository, account: &AccountConfig, dry_run: bool) -> Re
         }
     } else {
         crate::integrity::prepare_account(repository, account.id)?;
+    }
+    if !dry_run {
+        crate::progress::phase(progress, "Removing unreachable cache data");
     }
     let report = gc_unlocked(repository, account, dry_run, true, None)?;
     if !dry_run {
@@ -220,6 +266,15 @@ pub fn cache_rebuild(
     repository: &Repository,
     account: &AccountConfig,
 ) -> Result<CacheRebuildReport> {
+    cache_rebuild_with_progress(repository, account, &crate::progress::none)
+}
+
+pub fn cache_rebuild_with_progress(
+    repository: &Repository,
+    account: &AccountConfig,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<CacheRebuildReport> {
+    crate::progress::phase(progress, "Validating cache rebuild");
     let _lock = repository.account_lock(account.id)?;
     crate::integrity::bootstrap_account(repository, account.id)?;
     crate::integrity::validate_cache_rebuild_guard(repository, account.id)?;
@@ -230,6 +285,7 @@ pub fn cache_rebuild(
         .into());
     }
     let account_root = account_dir(repository, account.id);
+    crate::progress::phase(progress, "Clearing provider cache");
     for path in [
         repository.data_dir(account.id),
         account_root.join("provider"),
@@ -250,6 +306,7 @@ pub fn cache_rebuild(
         repository.data_dir(account.id),
         std::os::unix::fs::PermissionsExt::from_mode(0o700),
     )?;
+    crate::progress::phase(progress, "Rebuilding index and integrity");
     CanonicalStore::new(repository, account)?.rebuild_index_unlocked()?;
     audit::append(
         &account_root.join("audit"),

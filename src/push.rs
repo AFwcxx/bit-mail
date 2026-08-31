@@ -122,12 +122,35 @@ pub fn push_account<F, C>(
     account: &AccountConfig,
     options: PushOptions,
     provider: F,
-    mut confirm: C,
+    confirm: C,
 ) -> Result<PushReport>
 where
     F: FnOnce() -> Result<Box<dyn MailProvider>>,
     C: FnMut(ReviewStage, &PushReport) -> Result<bool>,
 {
+    push_account_with_progress(
+        repository,
+        account,
+        options,
+        provider,
+        confirm,
+        &crate::progress::none,
+    )
+}
+
+pub fn push_account_with_progress<F, C>(
+    repository: &Repository,
+    account: &AccountConfig,
+    options: PushOptions,
+    provider: F,
+    mut confirm: C,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<PushReport>
+where
+    F: FnOnce() -> Result<Box<dyn MailProvider>>,
+    C: FnMut(ReviewStage, &PushReport) -> Result<bool>,
+{
+    crate::progress::phase(progress, format!("Preparing push for {}", account.alias));
     let _lock = repository.account_lock(account.id)?;
     repository.require_current_runtime_assets()?;
     crate::integrity::prepare_repository(repository)?;
@@ -201,6 +224,7 @@ where
         ))
         .into());
     }
+    progress(crate::progress::Event::Suspend);
     if !confirm(ReviewStage::Normal, &report)? {
         report.outcome = PushOutcome::Cancelled;
         return Ok(report);
@@ -212,6 +236,14 @@ where
         return Ok(report);
     }
 
+    crate::progress::phase(
+        progress,
+        format!(
+            "Applying {} change(s) to {}",
+            report.items.len(),
+            account.alias
+        ),
+    );
     let provider = provider()?;
     execute(provider.as_ref(), &mut report.items);
     report.retries = provider.retries();
@@ -231,6 +263,10 @@ where
         PushOutcome::Success
     };
 
+    crate::progress::phase(
+        progress,
+        format!("Cleaning local state for {}", account.alias),
+    );
     for item in &report.items {
         if matches!(
             item.outcome,

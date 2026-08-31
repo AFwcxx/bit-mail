@@ -113,8 +113,25 @@ pub fn run(
     repository: &Repository,
     options: Options<'_>,
     credentials: &dyn CredentialStore,
-    mut online_probe: impl FnMut(&AccountConfig) -> Result<()>,
+    online_probe: impl FnMut(&AccountConfig) -> Result<()>,
 ) -> DoctorReport {
+    run_with_progress(
+        repository,
+        options,
+        credentials,
+        online_probe,
+        &crate::progress::none,
+    )
+}
+
+pub fn run_with_progress(
+    repository: &Repository,
+    options: Options<'_>,
+    credentials: &dyn CredentialStore,
+    mut online_probe: impl FnMut(&AccountConfig) -> Result<()>,
+    progress: crate::progress::Reporter<'_>,
+) -> DoctorReport {
+    crate::progress::phase(progress, "Checking repository health");
     let mut checks = Vec::new();
     ok(
         &mut checks,
@@ -238,6 +255,7 @@ pub fn run(
     };
 
     if options.full {
+        crate::progress::phase(progress, "Validating full repository integrity");
         match crate::integrity::validate_full(repository) {
             Ok(value) if value.mismatches.is_empty() => ok(
                 &mut checks,
@@ -269,6 +287,7 @@ pub fn run(
 
     let config = repository.config().ok();
     for account in accounts {
+        crate::progress::phase(progress, format!("Checking account {}", account.alias));
         let id = Some(account.id);
         if account.provider != "gmail"
             || account.provider_identity.is_none()
@@ -407,6 +426,7 @@ pub fn run(
             }
         }
         if options.online {
+            crate::progress::phase(progress, format!("Checking Gmail for {}", account.alias));
             check_result(
                 &mut checks,
                 "gmail.authorization",

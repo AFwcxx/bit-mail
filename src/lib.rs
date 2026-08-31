@@ -12,6 +12,7 @@ pub mod gmail;
 pub mod harness;
 pub mod integrity;
 pub mod knowledge;
+pub mod progress;
 pub mod provider;
 pub mod pull;
 pub mod push;

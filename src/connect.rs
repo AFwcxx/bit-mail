@@ -14,14 +14,34 @@ use crate::{
 };
 
 pub fn run(repository: &Repository, reauthorize: Option<&str>) -> Result<()> {
+    run_with_progress(repository, reauthorize, &crate::progress::none)
+}
+
+pub fn run_with_progress(
+    repository: &Repository,
+    reauthorize: Option<&str>,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<()> {
     repository.require_integrity_ready()?;
     if !io::stdin().is_terminal() {
         return Err(io::Error::other("connect requires an interactive terminal").into());
     }
     let store = KeyringStore::new(repository.id());
+    progress(crate::progress::Event::Suspend);
     match reauthorize {
-        Some(alias) => reauthorize_account(repository, &store, alias, gmail::authorize),
-        None => connect_account(repository, &store, gmail::authorize),
+        Some(alias) => reauthorize_account(
+            repository,
+            &store,
+            alias,
+            |id, secret| gmail::authorize_with_progress(id, secret, progress),
+            progress,
+        ),
+        None => connect_account(
+            repository,
+            &store,
+            |id, secret| gmail::authorize_with_progress(id, secret, progress),
+            progress,
+        ),
     }
 }
 
@@ -29,10 +49,13 @@ fn connect_account(
     repository: &Repository,
     store: &dyn CredentialStore,
     authorize: impl FnOnce(&str, &str) -> Result<Authorization>,
+    progress: crate::progress::Reporter<'_>,
 ) -> Result<()> {
     let alias = prompt_account_alias(repository)?;
     let (profile, secret) = select_profile(repository, store, None)?;
+    crate::progress::phase(progress, "Waiting for Gmail authorization");
     let authorization = authorize(&profile.client_id, &secret)?;
+    crate::progress::phase(progress, "Saving account credentials");
     commit_account(
         repository,
         store,
@@ -40,6 +63,7 @@ fn connect_account(
         &alias,
         &profile,
         authorization,
+        progress,
     )
 }
 
@@ -50,6 +74,7 @@ fn commit_account(
     alias: &str,
     profile: &OAuthClientProfile,
     authorization: Authorization,
+    progress: crate::progress::Reporter<'_>,
 ) -> Result<()> {
     if repository.accounts()?.iter().any(|account| {
         account.provider == "gmail"
@@ -76,6 +101,7 @@ fn commit_account(
         },
     ) {
         Ok(account) => {
+            progress(crate::progress::Event::Suspend);
             println!(
                 "Connected {} as {} ({})",
                 authorization.email, account.alias, account.id
@@ -97,6 +123,7 @@ fn reauthorize_account(
     store: &dyn CredentialStore,
     alias: &str,
     authorize: impl FnOnce(&str, &str) -> Result<Authorization>,
+    progress: crate::progress::Reporter<'_>,
 ) -> Result<()> {
     let account = repository.account_by_alias(alias)?;
     if account.provider != "gmail" {
@@ -107,6 +134,7 @@ fn reauthorize_account(
         .as_deref()
         .ok_or_else(|| io::Error::other("account has no OAuth client profile"))?;
     let (profile, secret) = select_profile(repository, store, Some(profile_alias))?;
+    crate::progress::phase(progress, "Waiting for Gmail authorization");
     let authorization = authorize(&profile.client_id, &secret)?;
     if !account
         .provider_identity
@@ -125,10 +153,12 @@ fn reauthorize_account(
             io::Error::other(format!("account {alias} changed during authorization")).into(),
         );
     }
+    crate::progress::phase(progress, "Saving account credentials");
     store.set(
         CredentialId::AccountRefresh(account.id),
         &authorization.refresh_token,
     )?;
+    progress(crate::progress::Event::Suspend);
     println!("Reauthorized {alias} ({})", authorization.email);
     Ok(())
 }
@@ -498,10 +528,16 @@ mod tests {
     fn reauthorization_only_replaces_the_token_for_the_same_mailbox() {
         let (_directory, repository, account, store) = account_fixture("gmail");
         assert!(
-            reauthorize_account(&repository, &store, "personal", |_, _| Ok(Authorization {
-                email: "two@example.com".into(),
-                refresh_token: "new".into()
-            }))
+            reauthorize_account(
+                &repository,
+                &store,
+                "personal",
+                |_, _| Ok(Authorization {
+                    email: "two@example.com".into(),
+                    refresh_token: "new".into()
+                }),
+                &crate::progress::none
+            )
             .is_err()
         );
         assert_eq!(
@@ -511,12 +547,18 @@ mod tests {
                 .as_deref(),
             Some("old")
         );
-        reauthorize_account(&repository, &store, "personal", |_, _| {
-            Ok(Authorization {
-                email: "ONE@EXAMPLE.COM".into(),
-                refresh_token: "new".into(),
-            })
-        })
+        reauthorize_account(
+            &repository,
+            &store,
+            "personal",
+            |_, _| {
+                Ok(Authorization {
+                    email: "ONE@EXAMPLE.COM".into(),
+                    refresh_token: "new".into(),
+                })
+            },
+            &crate::progress::none,
+        )
         .unwrap();
         assert_eq!(
             store
@@ -532,21 +574,27 @@ mod tests {
         let (_directory, repository, account, store) = account_fixture("gmail");
 
         assert!(
-            reauthorize_account(&repository, &store, "personal", |_, _| {
-                repository.remove_account(
-                    "personal",
-                    RemoveOptions {
-                        discard_local_data: false,
-                        keep_credentials: true,
-                        revoke_credentials: false,
-                    },
-                    &UnavailableCredentialRevoker,
-                )?;
-                Ok(Authorization {
-                    email: "one@example.com".into(),
-                    refresh_token: "new".into(),
-                })
-            })
+            reauthorize_account(
+                &repository,
+                &store,
+                "personal",
+                |_, _| {
+                    repository.remove_account(
+                        "personal",
+                        RemoveOptions {
+                            discard_local_data: false,
+                            keep_credentials: true,
+                            revoke_credentials: false,
+                        },
+                        &UnavailableCredentialRevoker,
+                    )?;
+                    Ok(Authorization {
+                        email: "one@example.com".into(),
+                        refresh_token: "new".into(),
+                    })
+                },
+                &crate::progress::none
+            )
             .is_err()
         );
         assert_eq!(
@@ -563,9 +611,13 @@ mod tests {
     fn reauthorization_rejects_non_gmail_accounts_before_oauth() {
         let (_directory, repository, _account, store) = account_fixture("imap");
 
-        let error = reauthorize_account(&repository, &store, "personal", |_, _| {
-            panic!("OAuth must not start for a non-Gmail account")
-        })
+        let error = reauthorize_account(
+            &repository,
+            &store,
+            "personal",
+            |_, _| panic!("OAuth must not start for a non-Gmail account"),
+            &crate::progress::none,
+        )
         .unwrap_err();
 
         assert!(error.to_string().contains("not a Gmail account"));
@@ -599,6 +651,7 @@ mod tests {
                     email: email.into(),
                     refresh_token: token.into(),
                 },
+                &crate::progress::none,
             )
             .unwrap();
         }
@@ -644,6 +697,7 @@ mod tests {
                     email: "one@example.com".into(),
                     refresh_token: "refresh".into(),
                 },
+                &crate::progress::none,
             )
             .is_err()
         );

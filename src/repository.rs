@@ -75,6 +75,15 @@ pub enum GitIgnorePolicy {
 
 impl Repository {
     pub fn initialize(root: &Path, policy: GitIgnorePolicy) -> Result<Self> {
+        Self::initialize_with_progress(root, policy, &crate::progress::none)
+    }
+
+    pub fn initialize_with_progress(
+        root: &Path,
+        policy: GitIgnorePolicy,
+        progress: crate::progress::Reporter<'_>,
+    ) -> Result<Self> {
+        crate::progress::phase(progress, "Initializing repository");
         let root = fs::canonicalize(root)?;
         for name in MANAGED_PATHS {
             if root.join(name).exists() {
@@ -125,7 +134,8 @@ impl Repository {
         if let Err(error) = fs::remove_dir_all(&staging)
             && error.kind() != io::ErrorKind::NotFound
         {
-            eprintln!(
+            let _ = writeln!(
+                crate::progress::stderr_writer(),
                 "warning: failed to remove initialization staging directory {}: {error}",
                 staging.display()
             );
@@ -133,8 +143,10 @@ impl Repository {
         result?;
 
         let repository = Self::open(root)?;
+        crate::progress::phase(progress, "Building repository integrity");
         crate::integrity::rebuild_full(&repository)?;
         fs::remove_file(repository.root.join(".bit-mail/integrity-migration"))?;
+        progress(crate::progress::Event::Suspend);
         if let Err(error) = protect_git_paths(repository.root(), policy) {
             eprintln!("warning: repository initialized, but Git ignore protection failed: {error}");
         }
@@ -430,6 +442,14 @@ impl Repository {
     }
 
     pub fn migrate_integrity(&self) -> Result<bool> {
+        self.migrate_integrity_with_progress(&crate::progress::none)
+    }
+
+    pub fn migrate_integrity_with_progress(
+        &self,
+        progress: crate::progress::Reporter<'_>,
+    ) -> Result<bool> {
+        crate::progress::phase(progress, "Validating repository integrity");
         let marker = self.root.join(".bit-mail/integrity-migration");
         if self.metadata.schema_version == REPOSITORY_SCHEMA_VERSION && !marker.exists() {
             return Ok(false);
@@ -454,6 +474,7 @@ impl Repository {
             },
         )?;
         let current = Self::open(self.root.clone())?;
+        crate::progress::phase(progress, "Rebuilding repository integrity");
         crate::integrity::rebuild_full(&current)?;
         fs::remove_file(marker)?;
         Ok(true)

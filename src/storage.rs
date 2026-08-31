@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -413,7 +414,10 @@ impl CanonicalStore {
         if let Err(cleanup) = fs::remove_dir_all(&staging)
             && cleanup.kind() != std::io::ErrorKind::NotFound
         {
-            eprintln!("warning: failed to remove storage staging directory: {cleanup}");
+            let _ = writeln!(
+                crate::progress::stderr_writer(),
+                "warning: failed to remove storage staging directory: {cleanup}"
+            );
         }
         result?;
         Ok(ids)
@@ -732,7 +736,10 @@ impl CanonicalStore {
         if let Err(cleanup) = fs::remove_dir_all(&staging)
             && cleanup.kind() != std::io::ErrorKind::NotFound
         {
-            eprintln!("warning: failed to remove attachment staging directory: {cleanup}");
+            let _ = writeln!(
+                crate::progress::stderr_writer(),
+                "warning: failed to remove attachment staging directory: {cleanup}"
+            );
         }
         result
     }

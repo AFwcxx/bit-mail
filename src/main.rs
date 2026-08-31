@@ -12,6 +12,7 @@ use bit_mail::{
         KnowledgeCommand, RawCommand, SelectionCommand,
     },
     credentials::{GoogleCredentialRevoker, KeyringStore},
+    progress::{Event as ProgressEvent, Spinner},
     pull::{AccountReport, PullReport},
     repository::{AccountConfig, GitIgnorePolicy, RemoveOptions, Repository},
 };
@@ -45,15 +46,24 @@ fn pull_accounts(
     )
 }
 
+fn spinner_enabled(verbose: bool, json: bool) -> bool {
+    !verbose && !json
+}
+
+fn tracing_level(verbose: bool) -> tracing::Level {
+    if verbose {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::INFO
+    }
+}
+
 fn run() -> Result<()> {
     let cli = Cli::parse();
     tracing_subscriber::fmt()
         .with_target(false)
-        .with_max_level(if cli.verbose {
-            tracing::Level::DEBUG
-        } else {
-            tracing::Level::INFO
-        })
+        .with_max_level(tracing_level(cli.verbose))
+        .with_writer(bit_mail::progress::stderr_writer)
         .try_init()?;
     match cli.command {
         None => {
@@ -72,7 +82,14 @@ fn run() -> Result<()> {
             }
         }
         Some(Command::Init) => {
-            let repository = Repository::initialize(&env::current_dir()?, GitIgnorePolicy::Prompt)?;
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+            let progress = |event| spinner.report(event);
+            let repository = Repository::initialize_with_progress(
+                &env::current_dir()?,
+                GitIgnorePolicy::Prompt,
+                &progress,
+            )?;
+            drop(spinner);
             println!(
                 "Initialized bit-mail repository {} at {}",
                 repository.id(),
@@ -110,7 +127,10 @@ fn run() -> Result<()> {
                 }
             };
             let store = KeyringStore::new(repository.id());
-            let report = bit_mail::diagnostics::run(
+            let spinner =
+                Spinner::new(spinner_enabled(cli.verbose, args.json) && (args.full || args.online));
+            let progress = |event| spinner.report(event);
+            let report = bit_mail::diagnostics::run_with_progress(
                 &repository,
                 bit_mail::diagnostics::Options {
                     account: cli.account.as_deref(),
@@ -125,7 +145,9 @@ fn run() -> Result<()> {
                         .current_history_id()
                         .map(|_| ())
                 },
+                &progress,
             );
+            drop(spinner);
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -137,7 +159,11 @@ fn run() -> Result<()> {
         }
         Some(Command::MigrateIntegrity) => {
             let repository = Repository::discover_current()?;
-            if repository.migrate_integrity()? {
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+            let progress = |event| spinner.report(event);
+            let migrated = repository.migrate_integrity_with_progress(&progress)?;
+            drop(spinner);
+            if migrated {
                 println!("Migrated repository integrity to schema v2");
             } else {
                 println!("Repository integrity is already schema v2");
@@ -145,7 +171,9 @@ fn run() -> Result<()> {
         }
         Some(Command::Connect { reauthorize }) => {
             let repository = Repository::discover_current()?;
-            bit_mail::connect::run(&repository, reauthorize.as_deref())?;
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+            let progress = |event| spinner.report(event);
+            bit_mail::connect::run_with_progress(&repository, reauthorize.as_deref(), &progress)?;
         }
         Some(Command::Config(args)) => {
             let repository = Repository::discover_current()?;
@@ -275,15 +303,25 @@ fn run() -> Result<()> {
                 all: args.all,
             };
             let store = KeyringStore::new(repository.id());
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, args.json));
+            let progress = |event| spinner.report(event);
             let report = pull_accounts(accounts, |account| {
-                bit_mail::pull::pull_account(&repository, account, options, || {
-                    Ok(Box::new(bit_mail::gmail::authorized_client(
-                        &repository,
-                        account,
-                        &store,
-                    )?))
-                })
+                bit_mail::pull::pull_account_with_progress(
+                    &repository,
+                    account,
+                    options,
+                    || {
+                        Ok(Box::new(bit_mail::gmail::authorized_client(
+                            &repository,
+                            account,
+                            &store,
+                        )?))
+                    },
+                    &progress,
+                )
+                .inspect_err(|_| progress(ProgressEvent::Suspend))
             });
+            drop(spinner);
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -327,7 +365,9 @@ fn run() -> Result<()> {
                 bit_mail::push::PushScope::AllStaged
             };
             let store = KeyringStore::new(repository.id());
-            let report = bit_mail::push::push_account(
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, args.json));
+            let progress = |event| spinner.report(event);
+            let report = bit_mail::push::push_account_with_progress(
                 &repository,
                 &account,
                 bit_mail::push::PushOptions {
@@ -342,7 +382,9 @@ fn run() -> Result<()> {
                     )?))
                 },
                 |stage, preview| review_push(stage, preview, args.yes),
+                &progress,
             )?;
+            drop(spinner);
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else if args.dry_run {
@@ -362,11 +404,13 @@ fn run() -> Result<()> {
                 env::var("BIT_MAIL_ACCOUNT").ok().as_deref(),
             )?;
             let store = KeyringStore::new(repository.id());
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+            let progress = |event| spinner.report(event);
             let AttachmentCommand::Fetch {
                 message_id,
                 part_id,
             } = args.command;
-            let path = bit_mail::pull::fetch_attachment(
+            let path = bit_mail::pull::fetch_attachment_with_progress(
                 &repository,
                 &account,
                 message_id,
@@ -378,7 +422,9 @@ fn run() -> Result<()> {
                         &store,
                     )?))
                 },
+                &progress,
             )?;
+            drop(spinner);
             println!("{}", path.display());
         }
         Some(Command::Raw(args)) => {
@@ -389,14 +435,23 @@ fn run() -> Result<()> {
                 env::var("BIT_MAIL_ACCOUNT").ok().as_deref(),
             )?;
             let store = KeyringStore::new(repository.id());
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+            let progress = |event| spinner.report(event);
             let RawCommand::Fetch { message_id } = args.command;
-            let path = bit_mail::pull::fetch_raw(&repository, &account, message_id, || {
-                Ok(Box::new(bit_mail::gmail::authorized_client(
-                    &repository,
-                    &account,
-                    &store,
-                )?))
-            })?;
+            let path = bit_mail::pull::fetch_raw_with_progress(
+                &repository,
+                &account,
+                message_id,
+                || {
+                    Ok(Box::new(bit_mail::gmail::authorized_client(
+                        &repository,
+                        &account,
+                        &store,
+                    )?))
+                },
+                &progress,
+            )?;
+            drop(spinner);
             println!("{}", path.display());
         }
         Some(Command::WorkItems(args)) => {
@@ -583,13 +638,22 @@ fn run() -> Result<()> {
             let repository = Repository::discover_current()?;
             let account = resolve_account(&repository, cli.account.as_deref())?;
             let store = KeyringStore::new(repository.id());
-            let report = bit_mail::recovery::repair(&repository, &account, message_id, || {
-                Ok(Box::new(bit_mail::gmail::authorized_client(
-                    &repository,
-                    &account,
-                    &store,
-                )?))
-            })?;
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+            let progress = |event| spinner.report(event);
+            let report = bit_mail::recovery::repair_with_progress(
+                &repository,
+                &account,
+                message_id,
+                || {
+                    Ok(Box::new(bit_mail::gmail::authorized_client(
+                        &repository,
+                        &account,
+                        &store,
+                    )?))
+                },
+                &progress,
+            )?;
+            drop(spinner);
             println!(
                 "Repaired {} message(s); {} pending",
                 report.thread_messages, report.pending
@@ -598,7 +662,15 @@ fn run() -> Result<()> {
         Some(Command::Gc(args)) => {
             let repository = Repository::discover_current()?;
             let account = resolve_account(&repository, cli.account.as_deref())?;
-            let report = bit_mail::recovery::gc(&repository, &account, args.dry_run)?;
+            let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+            let progress = |event| spinner.report(event);
+            let report = bit_mail::recovery::gc_with_progress(
+                &repository,
+                &account,
+                args.dry_run,
+                &progress,
+            )?;
+            drop(spinner);
             let action = if args.dry_run {
                 "Would remove"
             } else {
@@ -615,7 +687,14 @@ fn run() -> Result<()> {
             let account = resolve_account(&repository, cli.account.as_deref())?;
             match args.command {
                 CacheCommand::Rebuild => {
-                    bit_mail::recovery::cache_rebuild(&repository, &account)?;
+                    let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+                    let progress = |event| spinner.report(event);
+                    bit_mail::recovery::cache_rebuild_with_progress(
+                        &repository,
+                        &account,
+                        &progress,
+                    )?;
+                    drop(spinner);
                     println!("Rebuilt cache for {}", account.alias);
                 }
             }
@@ -625,7 +704,14 @@ fn run() -> Result<()> {
             let account = resolve_account(&repository, cli.account.as_deref())?;
             match args.command {
                 IndexCommand::Rebuild => {
-                    bit_mail::recovery::index_rebuild(&repository, &account)?;
+                    let spinner = Spinner::new(spinner_enabled(cli.verbose, false));
+                    let progress = |event| spinner.report(event);
+                    bit_mail::recovery::index_rebuild_with_progress(
+                        &repository,
+                        &account,
+                        &progress,
+                    )?;
+                    drop(spinner);
                     println!("Rebuilt structural index for {}", account.alias);
                 }
             }
@@ -796,5 +882,18 @@ mod tests {
 
         assert!(json["retries"].is_null());
         assert!(json["backlog_remaining"].is_null());
+    }
+
+    #[test]
+    fn spinner_is_suppressed_for_verbose_and_json_output() {
+        assert!(spinner_enabled(false, false));
+        assert!(!spinner_enabled(true, false));
+        assert!(!spinner_enabled(false, true));
+    }
+
+    #[test]
+    fn default_tracing_keeps_operational_warnings_visible() {
+        assert_eq!(tracing_level(false), tracing::Level::INFO);
+        assert_eq!(tracing_level(true), tracing::Level::DEBUG);
     }
 }

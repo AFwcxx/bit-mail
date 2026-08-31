@@ -82,6 +82,7 @@ fn doctor_reports_repository_health_without_network_or_accounts() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!output.stderr.contains(&0x1b));
     assert_eq!(report["schema_version"], 1);
     assert_eq!(report["status"], "warning");
     assert!(
@@ -265,6 +266,7 @@ fn account_commands_use_uuid_owned_state_without_provider_setup() {
         "{}",
         String::from_utf8_lossy(&index.stderr)
     );
+    assert!(!index.stderr.contains(&0x1b));
 
     let conflicting_scope = common::bit_mail()
         .current_dir(directory.path())

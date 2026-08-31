@@ -79,6 +79,14 @@ pub fn parse_desktop_client(json: &str) -> Result<ImportedClient> {
 }
 
 pub fn authorize(client_id: &str, client_secret: &str) -> Result<Authorization> {
+    authorize_with_progress(client_id, client_secret, &crate::progress::none)
+}
+
+pub fn authorize_with_progress(
+    client_id: &str,
+    client_secret: &str,
+    progress: crate::progress::Reporter<'_>,
+) -> Result<Authorization> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
     let redirect = format!("http://127.0.0.1:{}/", listener.local_addr()?.port());
@@ -95,10 +103,13 @@ pub fn authorize(client_id: &str, client_secret: &str) -> Result<Authorization> 
         .add_extra_param("prompt", "consent")
         .set_pkce_challenge(challenge)
         .url();
+    progress(crate::progress::Event::Suspend);
     if !open_browser(auth_url.as_str()) {
         eprintln!("Open this authorization URL:\n{auth_url}");
     }
+    crate::progress::phase(progress, "Waiting for Gmail authorization");
     let code = wait_for_code(&listener, state.secret())?;
+    crate::progress::phase(progress, "Exchanging Gmail authorization");
     let http = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
@@ -112,6 +123,7 @@ pub fn authorize(client_id: &str, client_secret: &str) -> Result<Authorization> 
         .ok_or_else(|| std::io::Error::other("Google did not return a refresh token"))?
         .secret()
         .to_owned();
+    crate::progress::phase(progress, "Verifying Gmail account");
     let profile: GmailProfile = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?
