@@ -82,4 +82,5 @@ jobs:
           cd dist
           shasum -a 256 bit-mail-*.tar.gz > SHA256SUMS
           gh release create "$GITHUB_REF_NAME" bit-mail-*.tar.gz SHA256SUMS \
-            --verify-tag --generate-notes --title "bit-mail $GITHUB_REF_NAME"
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+            --title "bit-mail $GITHUB_REF_NAME"
