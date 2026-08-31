@@ -6,7 +6,7 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-v0.1.1 is release-ready; publication and hosted verification are tracked under
+v0.1.1 is released for Linux and macOS. Release verification is tracked under
 [`docs/milestones/`](docs/milestones/README.md).
 
 ## Install and quick start
