@@ -40,3 +40,11 @@ gh attestation verify bit-mail-v0.1.0-<target>.tar.gz --repo AFwcxx/bit-mail
 The workflow refuses a tag whose version differs from `Cargo.toml`. A pushed
 `v0.1.0` tag builds the four archives and creates the GitHub Release with
 generated release notes.
+
+## Preparing a patch release
+
+On Linux, configure Git signing and install the Rust 1.88.0 toolchain, then run
+`./scripts/release.sh` from a clean `main` branch. It updates the current release
+references, runs the locked release test, and creates a signed release commit and
+tag locally. It never pushes. Run `./scripts/test-release.sh` to exercise the
+workflow in a temporary clone.
