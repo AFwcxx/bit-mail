@@ -6,7 +6,7 @@ The provider remains the source of truth. `bit-mail` is **not** an email client 
 
 ## Project status
 
-v0.1.1 is released for Linux and macOS. Release verification is tracked under
+v0.1.2 is release-ready; publication and hosted verification are tracked under
 [`docs/milestones/`](docs/milestones/README.md).
 
 ## Install and quick start
@@ -16,7 +16,7 @@ Download the archive for your platform plus `SHA256SUMS` from the
 the tagged source with Rust 1.88 or newer:
 
 ```bash
-cargo install --locked --force --git https://github.com/AFwcxx/bit-mail --tag v0.1.1 bit-mail
+cargo install --locked --force --git https://github.com/AFwcxx/bit-mail --tag v0.1.2 bit-mail
 mkdir ~/mail-triage
 cd ~/mail-triage
 bit-mail init

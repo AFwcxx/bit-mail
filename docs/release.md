@@ -2,7 +2,7 @@
 
 ## v0.1 contract
 
-bit-mail v0.1.1 supports Rust 1.88 or newer on Linux and macOS. Rust 1.88 is
+bit-mail v0.1.2 supports Rust 1.88 or newer on Linux and macOS. Rust 1.88 is
 the highest minimum required by the locked runtime dependency graph and is
 verified by CI.
 
@@ -15,7 +15,7 @@ The v0.1 persistent and machine-readable versions are frozen as follows:
 | Integrity encodings and manifests | 1 |
 | `help --json`, context, diagnostics, and push JSON | 1 |
 | Disposable SQLite index | 1 |
-| Embedded runtime assets | binary version (`0.1.1`) |
+| Embedded runtime assets | binary version (`0.1.2`) |
 
 Pre-integrity repository schema 1 is the only supported pre-release format.
 It remains readable and upgrades explicitly with `bit-mail migrate-integrity`.
@@ -34,11 +34,11 @@ attestation for every archive. Verify them with:
 
 ```bash
 shasum -a 256 -c SHA256SUMS
-gh attestation verify bit-mail-v0.1.1-<target>.tar.gz --repo AFwcxx/bit-mail
+gh attestation verify bit-mail-v0.1.2-<target>.tar.gz --repo AFwcxx/bit-mail
 ```
 
 The workflow refuses a tag whose version differs from `Cargo.toml`. A pushed
-`v0.1.1` tag builds the four archives and creates the GitHub Release with
+`v0.1.2` tag builds the four archives and creates the GitHub Release with
 generated release notes.
 
 ## Preparing a patch release
