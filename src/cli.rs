@@ -173,6 +173,8 @@ pub struct SelectionArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum SelectionCommand {
+    /// List selections and their current member counts.
+    List,
     /// Create an empty account-scoped selection.
     Create { name: String },
     /// Add actionable messages to a selection.
@@ -359,6 +361,7 @@ mod tests {
             vec!["bit-mail", "stage", "--stdin", "delete"],
             vec!["bit-mail", "stage", "--selection", "review", "read"],
             vec!["bit-mail", "unstage", "--selection", "review"],
+            vec!["bit-mail", "selection", "list", "--json"],
             vec!["bit-mail", "selection", "show", "review", "--json"],
             vec!["bit-mail", "knowledge", "list", "--json"],
         ] {

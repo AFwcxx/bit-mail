@@ -532,6 +532,16 @@ fn run() -> Result<()> {
             let account = resolve_account(&repository, cli.account.as_deref())?;
             let json = args.json;
             match args.command {
+                SelectionCommand::List => {
+                    let output = bit_mail::triage::list_selections(&repository, &account)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else {
+                        for selection in output.selections {
+                            println!("{}\t{}", selection.name, selection.message_count);
+                        }
+                    }
+                }
                 SelectionCommand::Create { name } => {
                     let value = bit_mail::triage::create_selection(&repository, &account, &name)?;
                     if json {

@@ -257,6 +257,8 @@ Selections are named account-local working sets of actionable message IDs.
 ```bash
 bit-mail selection create promotions
 bit-mail selection add promotions <id1> <id2> <id3>
+bit-mail selection list
+bit-mail selection list --json
 bit-mail selection show promotions
 bit-mail selection show promotions --json
 bit-mail selection remove promotions <id1> <id2>

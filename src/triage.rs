@@ -112,6 +112,20 @@ pub struct Selection {
     pub message_ids: Vec<Uuid>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SelectionSummary {
+    pub name: String,
+    pub message_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SelectionsOutput {
+    pub schema_version: u32,
+    pub account_id: Uuid,
+    pub account_alias: String,
+    pub selections: Vec<SelectionSummary>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StagedItem {
     pub message_id: Uuid,
@@ -409,6 +423,38 @@ pub fn show_selection(
     name: &str,
 ) -> Result<Selection> {
     read_selection(repository, account.id, name)
+}
+
+pub fn list_selections(
+    repository: &Repository,
+    account: &AccountConfig,
+) -> Result<SelectionsOutput> {
+    let directory = selections_dir(repository, account.id);
+    let mut selections = Vec::new();
+    if directory.is_dir() {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let name = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| error("invalid selection filename"))?;
+            let selection = read_selection(repository, account.id, name)?;
+            selections.push(SelectionSummary {
+                name: selection.name,
+                message_count: selection.message_ids.len(),
+            });
+        }
+    }
+    selections.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(SelectionsOutput {
+        schema_version: SCHEMA_VERSION,
+        account_id: account.id,
+        account_alias: account.alias.clone(),
+        selections,
+    })
 }
 
 pub fn delete_selection(
@@ -878,6 +924,41 @@ mod tests {
                 .state,
             WorkState::Pending
         );
+    }
+
+    #[test]
+    fn selection_listing_is_sorted_scoped_and_fails_on_invalid_state() {
+        let (_directory, repository, account) = repository();
+        let id = Uuid::now_v7();
+        write_pending(&repository, account.id, id).unwrap();
+        create_selection(&repository, &account, "zeta").unwrap();
+        create_selection(&repository, &account, "alpha").unwrap();
+        add_selection(&repository, &account, "alpha", &[id]).unwrap();
+
+        let other = repository
+            .create_account(NewAccount {
+                alias: "work",
+                provider: "gmail",
+                provider_identity: Some("work@example.com"),
+                credential_profile: None,
+            })
+            .unwrap();
+        create_selection(&repository, &other, "other").unwrap();
+
+        let output = list_selections(&repository, &account).unwrap();
+        assert_eq!(output.account_id, account.id);
+        assert_eq!(output.account_alias, "personal");
+        assert_eq!(
+            output
+                .selections
+                .iter()
+                .map(|selection| (selection.name.as_str(), selection.message_count))
+                .collect::<Vec<_>>(),
+            [("alpha", 1), ("zeta", 0)]
+        );
+
+        fs::write(selection_path(&repository, account.id, "alpha"), b"{}\n").unwrap();
+        assert!(list_selections(&repository, &account).is_err());
     }
 
     #[test]

@@ -479,6 +479,7 @@ Required examples:
 - `bit-mail show <message-id>`;
 - `bit-mail show <message-id> --context`;
 - `bit-mail thread show <message-id>` where useful;
+- `bit-mail selection list` and `--json`;
 - `bit-mail selection show <name>`;
 - `bit-mail knowledge list`;
 - `bit-mail context --json`;

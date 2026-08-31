@@ -238,7 +238,7 @@ fn behavior(path: &str) -> Option<CommandBehavior> {
             false,
             &[],
         ),
-        "work-items" | "show" | "selection show" => policy(
+        "work-items" | "show" | "selection list" | "selection show" => policy(
             AccountScope::SingleAccount,
             false,
             true,

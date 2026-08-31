@@ -31,6 +31,64 @@ fn help_is_available_without_provider_setup() {
 }
 
 #[test]
+fn selection_list_has_stable_human_and_json_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = Repository::initialize(
+        directory.path(),
+        bit_mail::repository::GitIgnorePolicy::Never,
+    )
+    .unwrap();
+    let account = repository
+        .create_account(NewAccount {
+            alias: "personal",
+            provider: "gmail",
+            provider_identity: None,
+            credential_profile: None,
+        })
+        .unwrap();
+
+    let empty = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["selection", "list"])
+        .output()
+        .unwrap();
+    assert!(empty.status.success());
+    assert!(empty.stdout.is_empty());
+
+    bit_mail::triage::create_selection(&repository, &account, "zeta").unwrap();
+    bit_mail::triage::create_selection(&repository, &account, "alpha").unwrap();
+    let human = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["selection", "list"])
+        .output()
+        .unwrap();
+    assert!(human.status.success());
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        "alpha\t0\nzeta\t0\n"
+    );
+
+    let json = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["selection", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(json.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&json.stdout).unwrap(),
+        serde_json::json!({
+            "schema_version": 1,
+            "account_id": account.id,
+            "account_alias": "personal",
+            "selections": [
+                {"name": "alpha", "message_count": 0},
+                {"name": "zeta", "message_count": 0}
+            ]
+        })
+    );
+}
+
+#[test]
 fn init_and_config_work_without_provider_setup() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let init = common::bit_mail()
