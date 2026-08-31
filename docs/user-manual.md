@@ -1,7 +1,7 @@
 # bit-mail user manual
 
 > **Status:** This manual describes the implemented v0.1 CLI contract and was
-> reviewed against `bit-mail help --json` schema 1 for the v0.1.0 release.
+> reviewed against `bit-mail help --json` schema 1 for the v0.1.1 release.
 
 ## 1. Mental model
 
