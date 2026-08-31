@@ -1123,7 +1123,7 @@ pub(crate) fn validate_alias(alias: &str) -> Result<()> {
         })
     {
         return Err(message(
-            "account alias must be 1-32 lowercase ASCII letters/digits with internal '-' or '_'",
+            "alias must be 1-32 lowercase ASCII letters/digits with internal '-' or '_'",
         ));
     }
     Ok(())

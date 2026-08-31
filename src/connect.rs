@@ -1,7 +1,7 @@
 use std::{
-    fs,
-    io::{self, IsTerminal, Write},
-    path::Path,
+    env, fs,
+    io::{self, BufRead, IsTerminal, Write},
+    path::{Path, PathBuf},
 };
 
 use uuid::Uuid;
@@ -30,15 +30,7 @@ fn connect_account(
     store: &dyn CredentialStore,
     authorize: impl FnOnce(&str, &str) -> Result<Authorization>,
 ) -> Result<()> {
-    let alias = prompt("Account alias")?;
-    validate_alias(&alias)?;
-    if repository
-        .accounts()?
-        .iter()
-        .any(|account| account.alias == alias)
-    {
-        return Err(io::Error::other(format!("account alias already exists: {alias}")).into());
-    }
+    let alias = prompt_account_alias(repository)?;
     let (profile, secret) = select_profile(repository, store, None)?;
     let authorization = authorize(&profile.client_id, &secret)?;
     commit_account(
@@ -146,15 +138,12 @@ fn select_profile(
     store: &dyn CredentialStore,
     required_alias: Option<&str>,
 ) -> Result<(OAuthClientProfile, String)> {
+    let profiles = repository.config()?.oauth_clients;
     let alias = match required_alias {
         Some(alias) => alias.to_owned(),
-        None => prompt("OAuth client profile alias")?,
+        None => prompt_profile_alias(&profiles)?,
     };
-    let profile = repository
-        .config()?
-        .oauth_clients
-        .into_iter()
-        .find(|profile| profile.alias == alias);
+    let profile = profiles.into_iter().find(|profile| profile.alias == alias);
     match profile {
         Some(profile) => {
             if profile.provider != "google" {
@@ -166,13 +155,7 @@ fn select_profile(
             let secret = match store.get(id)? {
                 Some(secret) => secret,
                 None => {
-                    let imported = import_client(&prompt("Desktop OAuth client JSON path")?)?;
-                    if imported.client_id != profile.client_id {
-                        return Err(io::Error::other(
-                            "imported client ID does not match the saved profile",
-                        )
-                        .into());
-                    }
+                    let imported = prompt_client(repository, Some(&profile.client_id))?;
                     store.set(id, &imported.client_secret)?;
                     imported.client_secret
                 }
@@ -180,8 +163,7 @@ fn select_profile(
             Ok((profile, secret))
         }
         None if required_alias.is_none() => {
-            validate_alias(&alias)?;
-            let imported = import_client(&prompt("Desktop OAuth client JSON path")?)?;
+            let imported = prompt_client(repository, None)?;
             let profile = OAuthClientProfile {
                 id: Uuid::new_v4(),
                 alias,
@@ -205,27 +187,157 @@ fn select_profile(
     }
 }
 
-fn import_client(path: &str) -> Result<ImportedClient> {
-    gmail::parse_desktop_client(&fs::read_to_string(Path::new(path))?)
+fn prompt_account_alias(repository: &Repository) -> Result<String> {
+    let default = default_account_alias(repository)?;
+    loop {
+        let alias = prompt(
+            "Account alias",
+            "Choose a short local name used with --account.\nExamples: personal, work, group. Use 1-32 lowercase letters/digits with internal '-' or '_'.",
+            default,
+        )?;
+        match validate_alias(&alias) {
+            Err(error) => eprintln!("Invalid account alias: {error}. Try again."),
+            Ok(())
+                if repository
+                    .accounts()?
+                    .iter()
+                    .any(|account| account.alias == alias) =>
+            {
+                eprintln!("Account alias '{alias}' already exists. Choose another.")
+            }
+            Ok(()) => return Ok(alias),
+        }
+    }
 }
 
-fn prompt(label: &str) -> Result<String> {
-    eprint!("{label}: ");
-    io::stderr().flush()?;
-    let mut value = String::new();
-    io::stdin().read_line(&mut value)?;
-    let value = value.trim().to_owned();
-    if value.is_empty() {
-        Err(io::Error::other(format!("{label} is required")).into())
+fn default_account_alias(repository: &Repository) -> Result<Option<&'static str>> {
+    let accounts = repository.accounts()?;
+    Ok(["personal", "work", "group"]
+        .into_iter()
+        .find(|candidate| !accounts.iter().any(|account| account.alias == *candidate)))
+}
+
+fn prompt_profile_alias(profiles: &[OAuthClientProfile]) -> Result<String> {
+    let aliases = profiles
+        .iter()
+        .map(|profile| profile.alias.as_str())
+        .collect::<Vec<_>>();
+    let help = if aliases.is_empty() {
+        "Name the reusable Google Desktop OAuth credentials. A new profile imports a client JSON."
+            .to_owned()
     } else {
-        Ok(value)
+        format!(
+            "Reuse a Google Desktop OAuth profile across Gmail accounts.\nExisting profiles: {}. Enter one to reuse it, or a new alias to import another client JSON.",
+            aliases.join(", ")
+        )
+    };
+    let default = default_profile_alias(profiles);
+    loop {
+        let alias = prompt("OAuth client profile alias", &help, default)?;
+        match validate_alias(&alias) {
+            Ok(()) => return Ok(alias),
+            Err(error) => eprintln!("Invalid OAuth client profile alias: {error}. Try again."),
+        }
+    }
+}
+
+fn default_profile_alias(profiles: &[OAuthClientProfile]) -> Option<&str> {
+    match profiles {
+        [] => Some("google"),
+        [profile] => Some(&profile.alias),
+        _ => None,
+    }
+}
+
+fn prompt_client(
+    repository: &Repository,
+    expected_client_id: Option<&str>,
+) -> Result<ImportedClient> {
+    const HELP: &str = "Download a Desktop app client JSON: Google Cloud Console > Google Auth Platform > Clients > Create client > Desktop app > Download JSON.\nGuide: https://developers.google.com/workspace/gmail/api/quickstart/python\nExample: ~/Downloads/client_secret_123456.apps.googleusercontent.com.json\nKeep this credential file outside the bit-mail repository.";
+    loop {
+        let path = prompt("Desktop OAuth client JSON path", HELP, None)?;
+        match import_client(repository, &path) {
+            Ok(imported)
+                if expected_client_id.is_none_or(|expected| imported.client_id == expected) =>
+            {
+                return Ok(imported);
+            }
+            Ok(_) => eprintln!(
+                "Cannot use that OAuth client JSON: its client ID does not match the saved profile. Try again."
+            ),
+            Err(error) => {
+                eprintln!("Cannot use that OAuth client JSON: {error}. Try again.")
+            }
+        }
+    }
+}
+
+fn import_client(repository: &Repository, path: &str) -> Result<ImportedClient> {
+    let home = env::var_os("HOME").map(PathBuf::from);
+    let path = expand_tilde(path, home.as_deref())?;
+    let path = fs::canonicalize(&path)
+        .map_err(|error| io::Error::other(format!("cannot open {}: {error}", path.display())))?;
+    if path.starts_with(fs::canonicalize(repository.root())?) {
+        return Err(io::Error::other(
+            "the credential file is inside the bit-mail repository; move it outside first",
+        )
+        .into());
+    }
+    gmail::parse_desktop_client(&fs::read_to_string(path)?)
+}
+
+fn expand_tilde(path: &str, home: Option<&Path>) -> Result<PathBuf> {
+    let Some(relative) = path.strip_prefix("~/") else {
+        return Ok(PathBuf::from(path));
+    };
+    let home = home.ok_or_else(|| io::Error::other("cannot expand '~': HOME is not set"))?;
+    Ok(home.join(relative))
+}
+
+fn prompt(label: &str, help: &str, default: Option<&str>) -> Result<String> {
+    prompt_from(
+        &mut io::stdin().lock(),
+        &mut io::stderr().lock(),
+        label,
+        help,
+        default,
+    )
+}
+
+fn prompt_from(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    label: &str,
+    help: &str,
+    default: Option<&str>,
+) -> Result<String> {
+    writeln!(output, "{help}")?;
+    loop {
+        write!(output, "{label}")?;
+        if let Some(default) = default {
+            write!(output, " [{default}]")?;
+        }
+        write!(output, ": ")?;
+        output.flush()?;
+        let mut value = String::new();
+        if input.read_line(&mut value)? == 0 {
+            return Err(io::Error::other("interactive input closed").into());
+        }
+        let value = value.trim();
+        if !value.is_empty() {
+            return Ok(value.to_owned());
+        }
+        if let Some(default) = default {
+            return Ok(default.to_owned());
+        }
+        writeln!(output, "{label} is required. Try again.")?;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::HashMap, sync::Mutex};
+    use std::{collections::HashMap, io::Cursor, sync::Mutex};
 
     use crate::repository::{
         AccountConfig, GitIgnorePolicy, RemoveOptions, UnavailableCredentialRevoker,
@@ -245,6 +357,111 @@ mod tests {
             self.0.lock().unwrap().remove(&id);
             Ok(())
         }
+    }
+
+    #[test]
+    fn guided_prompts_accept_safe_defaults_and_retry_missing_values() {
+        let mut output = Vec::new();
+        assert_eq!(
+            prompt_from(
+                &mut Cursor::new(b"\n"),
+                &mut output,
+                "Account alias",
+                "Choose an alias.",
+                Some("personal")
+            )
+            .unwrap(),
+            "personal"
+        );
+        assert!(String::from_utf8(output).unwrap().contains("[personal]"));
+
+        let mut output = Vec::new();
+        assert_eq!(
+            prompt_from(
+                &mut Cursor::new(b"\nwork\n"),
+                &mut output,
+                "Account alias",
+                "Choose an alias.",
+                None
+            )
+            .unwrap(),
+            "work"
+        );
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("Account alias is required")
+        );
+    }
+
+    #[test]
+    fn connect_defaults_only_when_the_choice_is_unambiguous() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = Repository::initialize(directory.path(), GitIgnorePolicy::Never).unwrap();
+        assert_eq!(
+            default_account_alias(&repository).unwrap(),
+            Some("personal")
+        );
+
+        for (alias, next) in [
+            ("personal", Some("work")),
+            ("work", Some("group")),
+            ("group", None),
+        ] {
+            repository
+                .create_account(NewAccount {
+                    alias,
+                    provider: "gmail",
+                    provider_identity: None,
+                    credential_profile: None,
+                })
+                .unwrap();
+            assert_eq!(default_account_alias(&repository).unwrap(), next);
+        }
+
+        assert_eq!(default_profile_alias(&[]), Some("google"));
+        let profile = OAuthClientProfile {
+            id: Uuid::new_v4(),
+            alias: "company".into(),
+            provider: "google".into(),
+            client_id: "id".into(),
+        };
+        assert_eq!(
+            default_profile_alias(std::slice::from_ref(&profile)),
+            Some("company")
+        );
+        assert_eq!(default_profile_alias(&[profile.clone(), profile]), None);
+    }
+
+    #[test]
+    fn oauth_json_supports_home_paths_but_not_repository_files() {
+        assert_eq!(
+            expand_tilde("~/Downloads/client.json", Some(Path::new("/home/person"))).unwrap(),
+            Path::new("/home/person/Downloads/client.json")
+        );
+
+        let directory = tempfile::tempdir().unwrap();
+        let repository = Repository::initialize(directory.path(), GitIgnorePolicy::Never).unwrap();
+        let json = r#"{"installed":{"client_id":"id","client_secret":"secret","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token"}}"#;
+        let inside = directory.path().join("client.json");
+        fs::write(&inside, json).unwrap();
+        assert!(
+            import_client(&repository, inside.to_str().unwrap())
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("inside the bit-mail repository")
+        );
+
+        let outside = tempfile::tempdir().unwrap();
+        let path = outside.path().join("client.json");
+        fs::write(&path, json).unwrap();
+        assert_eq!(
+            import_client(&repository, path.to_str().unwrap())
+                .unwrap()
+                .client_id,
+            "id"
+        );
     }
 
     fn account_fixture(

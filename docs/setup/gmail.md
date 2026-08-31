@@ -50,11 +50,17 @@ Expected flow:
 bit-mail connect
 ```
 
-Enter an account alias and OAuth client profile alias when prompted. A new
-profile also prompts for the downloaded Desktop client JSON path. Existing
-profiles can be reused for multiple mailboxes; each mailbox receives its own
-keyring-backed refresh token. If the browser cannot be launched, open the URL
-printed by `bit-mail` manually. Failed authorization creates no account.
+Each prompt explains the requested value and accepts a displayed default with
+Enter. Account aliases default through `personal`, `work`, and `group`. An
+existing OAuth client profile can be reused for multiple mailboxes; a new
+profile prompts for the downloaded Desktop client JSON path.
+
+The JSON path accepts `~/`. Keep that file outside the bit-mail repository;
+`connect` rejects credential files inside it. Invalid aliases and credential
+paths can be corrected without restarting the command. Each mailbox receives
+its own keyring-backed refresh token. If the browser cannot be launched, open
+the URL printed by `bit-mail` manually. Failed authorization creates no
+account.
 
 ## Reauthorization
 
