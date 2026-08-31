@@ -28,15 +28,4 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Test
-        shell: bash
-        run: |
-          set -o pipefail
-          cargo test 2>&1 | tee cargo-test.log || {
-            message=$(tail -n 30 cargo-test.log)
-            message=${message//'%'/'%25'}
-            message=${message//$'\r'/'%0D'}
-            message=${message//$'\n'/'%0A'}
-            echo "::error title=cargo test failed::$message"
-            exit 1
-          }
+      - run: cargo test
