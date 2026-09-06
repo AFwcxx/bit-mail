@@ -1,3 +1,4 @@
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{
@@ -15,6 +16,29 @@ pub struct AccountStatus {
     pub backlog_remaining: Option<bool>,
     pub last_successful_pull_ms: Option<u64>,
     pub last_successful_push_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetailedAccountStatus {
+    pub account_id: Uuid,
+    pub alias: String,
+    pub provider: String,
+    pub provider_identity: Option<String>,
+    pub pending: usize,
+    pub staged: usize,
+    pub read: usize,
+    pub delete: usize,
+    pub backlog_remaining: Option<bool>,
+    pub last_successful_pull_ms: Option<u64>,
+    pub last_successful_push_ms: Option<u64>,
+    pub selections: Vec<crate::triage::SelectionStatus>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusReport {
+    pub schema_version: u32,
+    pub repository: String,
+    pub accounts: Vec<DetailedAccountStatus>,
 }
 
 pub fn collect(
@@ -39,6 +63,42 @@ pub fn collect(
             })
         })
         .collect()
+}
+
+pub fn collect_detailed(
+    repository: &Repository,
+    mut accounts: Vec<AccountConfig>,
+) -> Result<Vec<DetailedAccountStatus>> {
+    accounts.sort_by(|left, right| left.alias.cmp(&right.alias));
+    accounts
+        .into_iter()
+        .map(|account| {
+            let (counts, selections) = crate::triage::status_snapshot(repository, account.id)?;
+            let provider = crate::pull::provider_status(repository, account.id)?;
+            Ok(DetailedAccountStatus {
+                account_id: account.id,
+                alias: account.alias,
+                provider: account.provider,
+                provider_identity: account.provider_identity,
+                pending: counts.pending,
+                staged: counts.read + counts.delete,
+                read: counts.read,
+                delete: counts.delete,
+                backlog_remaining: provider.backlog_remaining,
+                last_successful_pull_ms: provider.last_successful_pull_ms,
+                last_successful_push_ms: provider.last_successful_push_ms,
+                selections,
+            })
+        })
+        .collect()
+}
+
+pub fn report(repository: &Repository, accounts: Vec<AccountConfig>) -> Result<StatusReport> {
+    Ok(StatusReport {
+        schema_version: 1,
+        repository: repository.root().display().to_string(),
+        accounts: collect_detailed(repository, accounts)?,
+    })
 }
 
 #[cfg(test)]

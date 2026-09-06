@@ -273,6 +273,7 @@ dependencies = [
  "htmd",
  "httpdate",
  "keyring",
+ "libc",
  "mail-parser",
  "memmap2",
  "oauth2",

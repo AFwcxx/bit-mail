@@ -197,7 +197,7 @@ fn repository_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Elements(status_count as u64));
     group.bench_function("status", |b| {
         b.iter(|| {
-            bit_mail::status::collect(
+            bit_mail::status::collect_detailed(
                 &status.repository,
                 std::hint::black_box(vec![status.account.clone()]),
             )

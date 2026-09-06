@@ -1,6 +1,5 @@
+use std::io::{self, Write};
 use std::{
-    env,
-    io::{self, IsTerminal, Write},
     sync::{
         Mutex, MutexGuard,
         mpsc::{self, RecvTimeoutError, Sender},
@@ -69,11 +68,7 @@ enum Command {
 
 impl Spinner {
     pub fn new(enabled: bool) -> Self {
-        if !should_start(
-            enabled,
-            io::stderr().is_terminal(),
-            env::var("TERM").ok().as_deref(),
-        ) {
+        if !should_start(enabled, crate::format::stderr_enabled()) {
             return Self {
                 sender: None,
                 thread: None,
@@ -155,8 +150,8 @@ impl Drop for Spinner {
     }
 }
 
-fn should_start(enabled: bool, terminal: bool, term: Option<&str>) -> bool {
-    enabled && terminal && term != Some("dumb")
+fn should_start(enabled: bool, terminal: bool) -> bool {
+    enabled && terminal
 }
 
 fn clear(output: &mut impl Write) {
@@ -168,7 +163,11 @@ fn clear(output: &mut impl Write) {
 
 fn render(output: &mut impl Write, frame: &str, message: &str) {
     let mut visible = lock_stderr();
-    let _ = write!(output, "\r\x1b[2K{frame} {message}");
+    let _ = write!(
+        output,
+        "\r\x1b[2K{frame} {}",
+        crate::format::cyan(message, crate::format::stderr_enabled())
+    );
     let _ = output.flush();
     *visible = true;
 }
@@ -223,10 +222,9 @@ mod tests {
 
     #[test]
     fn spinner_starts_only_for_interactive_human_output() {
-        assert!(should_start(true, true, None));
-        assert!(!should_start(false, true, None));
-        assert!(!should_start(true, false, None));
-        assert!(!should_start(true, true, Some("dumb")));
+        assert!(should_start(true, true));
+        assert!(!should_start(false, true));
+        assert!(!should_start(true, false));
     }
 
     #[test]

@@ -179,10 +179,13 @@ Expected terminology:
 - last pull;
 - last successful push.
 
-`status` is offline and read-only. It prints one deterministic tab-separated
-line per selected account; missing provider history is reported as an unknown
-backlog and `-` timestamps. Use `context --json` for the stable automation
-contract.
+`status` is offline and read-only. In a terminal it renders cyan account,
+work-item, selection, and sync panels, including per-selection pending/read/
+delete counts and a next-action hint. Selections may overlap, and members
+without a local work item are reported explicitly. Redirected output keeps
+the deterministic tab-separated lines; `bit-mail status --json` emits the
+enriched automation report with exact millisecond timestamps and nullable
+unknown provider state.
 
 Actionable work items:
 

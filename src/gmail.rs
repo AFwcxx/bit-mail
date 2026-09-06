@@ -105,7 +105,13 @@ pub fn authorize_with_progress(
         .url();
     progress(crate::progress::Event::Suspend);
     if !open_browser(auth_url.as_str()) {
-        eprintln!("Open this authorization URL:\n{auth_url}");
+        eprintln!(
+            "{}",
+            crate::format::cyan(
+                format!("Open this authorization URL:\n{auth_url}"),
+                crate::format::stderr_enabled()
+            )
+        );
     }
     crate::progress::phase(progress, "Waiting for Gmail authorization");
     let code = wait_for_code(&listener, state.secret())?;

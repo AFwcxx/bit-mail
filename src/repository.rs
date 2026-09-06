@@ -136,8 +136,14 @@ impl Repository {
         {
             let _ = writeln!(
                 crate::progress::stderr_writer(),
-                "warning: failed to remove initialization staging directory {}: {error}",
-                staging.display()
+                "{}",
+                crate::format::yellow(
+                    format!(
+                        "warning: failed to remove initialization staging directory {}: {error}",
+                        staging.display()
+                    ),
+                    crate::format::stderr_enabled()
+                )
             );
         }
         result?;
@@ -148,7 +154,15 @@ impl Repository {
         fs::remove_file(repository.root.join(".bit-mail/integrity-migration"))?;
         progress(crate::progress::Event::Suspend);
         if let Err(error) = protect_git_paths(repository.root(), policy) {
-            eprintln!("warning: repository initialized, but Git ignore protection failed: {error}");
+            eprintln!(
+                "{}",
+                crate::format::yellow(
+                    format!(
+                        "warning: repository initialized, but Git ignore protection failed: {error}"
+                    ),
+                    crate::format::stderr_enabled()
+                )
+            );
         }
         Ok(repository)
     }
@@ -350,8 +364,14 @@ impl Repository {
 
         if let Err(error) = fs::remove_dir_all(&transaction) {
             eprintln!(
-                "warning: runtime assets synchronized, but cleanup failed for {}: {error}",
-                transaction.display()
+                "{}",
+                crate::format::yellow(
+                    format!(
+                        "warning: runtime assets synchronized, but cleanup failed for {}: {error}",
+                        transaction.display()
+                    ),
+                    crate::format::stderr_enabled()
+                )
             );
         }
         *self = Self::open(self.root.clone())?;
@@ -645,8 +665,14 @@ fn protect_git_paths(root: &Path, policy: GitIgnorePolicy) -> Result<()> {
     for path in &private_paths {
         if git_tracks(&git_root, path) {
             eprintln!(
-                "warning: private runtime path is already Git-tracked: {}",
-                git_root.join(path).display()
+                "{}",
+                crate::format::yellow(
+                    format!(
+                        "warning: private runtime path is already Git-tracked: {}",
+                        git_root.join(path).display()
+                    ),
+                    crate::format::stderr_enabled()
+                )
             );
         }
     }
@@ -657,8 +683,14 @@ fn protect_git_paths(root: &Path, policy: GitIgnorePolicy) -> Result<()> {
     let mut append = false;
     if matches!(policy, GitIgnorePolicy::Prompt) && io::stdin().is_terminal() {
         eprint!(
-            "Git repository detected. Add private bit-mail paths to {}? [y/N] ",
-            ignore_path.display()
+            "{}",
+            crate::format::cyan(
+                format!(
+                    "Git repository detected. Add private bit-mail paths to {}? [y/N] ",
+                    ignore_path.display()
+                ),
+                crate::format::stderr_enabled()
+            )
         );
         io::stderr().flush()?;
         let mut answer = String::new();
@@ -678,11 +710,20 @@ fn protect_git_paths(root: &Path, policy: GitIgnorePolicy) -> Result<()> {
         }
     } else {
         eprintln!(
-            "warning: add these private paths to {}:",
-            ignore_path.display()
+            "{}",
+            crate::format::yellow(
+                format!(
+                    "warning: add these private paths to {}:",
+                    ignore_path.display()
+                ),
+                crate::format::stderr_enabled()
+            )
         );
         for rule in missing {
-            eprintln!("  {rule}");
+            eprintln!(
+                "{}",
+                crate::format::yellow(format!("  {rule}"), crate::format::stderr_enabled())
+            );
         }
     }
     Ok(())
@@ -1039,8 +1080,14 @@ impl Repository {
         fs::remove_dir_all(account_dir)?;
         if knowledge_dir.exists() {
             eprintln!(
-                "warning: preserved account Knowledge at {}",
-                knowledge_dir.display()
+                "{}",
+                crate::format::yellow(
+                    format!(
+                        "warning: preserved account Knowledge at {}",
+                        knowledge_dir.display()
+                    ),
+                    crate::format::stderr_enabled()
+                )
             );
         }
         Ok(())

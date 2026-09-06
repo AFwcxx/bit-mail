@@ -103,8 +103,11 @@ fn commit_account(
         Ok(account) => {
             progress(crate::progress::Event::Suspend);
             println!(
-                "Connected {} as {} ({})",
-                authorization.email, account.alias, account.id
+                "{}",
+                crate::format::result(format!(
+                    "Connected {} as {} ({})",
+                    authorization.email, account.alias, account.id
+                ))
             );
             Ok(())
         }
@@ -159,7 +162,10 @@ fn reauthorize_account(
         &authorization.refresh_token,
     )?;
     progress(crate::progress::Event::Suspend);
-    println!("Reauthorized {alias} ({})", authorization.email);
+    println!(
+        "{}",
+        crate::format::result(format!("Reauthorized {alias} ({})", authorization.email))
+    );
     Ok(())
 }
 
@@ -226,14 +232,26 @@ fn prompt_account_alias(repository: &Repository) -> Result<String> {
             default,
         )?;
         match validate_alias(&alias) {
-            Err(error) => eprintln!("Invalid account alias: {error}. Try again."),
+            Err(error) => eprintln!(
+                "{}",
+                crate::format::yellow(
+                    format!("Invalid account alias: {error}. Try again."),
+                    crate::format::stderr_enabled()
+                )
+            ),
             Ok(())
                 if repository
                     .accounts()?
                     .iter()
                     .any(|account| account.alias == alias) =>
             {
-                eprintln!("Account alias '{alias}' already exists. Choose another.")
+                eprintln!(
+                    "{}",
+                    crate::format::yellow(
+                        format!("Account alias '{alias}' already exists. Choose another."),
+                        crate::format::stderr_enabled()
+                    )
+                )
             }
             Ok(()) => return Ok(alias),
         }
@@ -266,7 +284,13 @@ fn prompt_profile_alias(profiles: &[OAuthClientProfile]) -> Result<String> {
         let alias = prompt("OAuth client profile alias", &help, default)?;
         match validate_alias(&alias) {
             Ok(()) => return Ok(alias),
-            Err(error) => eprintln!("Invalid OAuth client profile alias: {error}. Try again."),
+            Err(error) => eprintln!(
+                "{}",
+                crate::format::yellow(
+                    format!("Invalid OAuth client profile alias: {error}. Try again."),
+                    crate::format::stderr_enabled()
+                )
+            ),
         }
     }
 }
@@ -293,10 +317,20 @@ fn prompt_client(
                 return Ok(imported);
             }
             Ok(_) => eprintln!(
-                "Cannot use that OAuth client JSON: its client ID does not match the saved profile. Try again."
+                "{}",
+                crate::format::yellow(
+                    "Cannot use that OAuth client JSON: its client ID does not match the saved profile. Try again.",
+                    crate::format::stderr_enabled()
+                )
             ),
             Err(error) => {
-                eprintln!("Cannot use that OAuth client JSON: {error}. Try again.")
+                eprintln!(
+                    "{}",
+                    crate::format::yellow(
+                        format!("Cannot use that OAuth client JSON: {error}. Try again."),
+                        crate::format::stderr_enabled()
+                    )
+                )
             }
         }
     }
@@ -325,11 +359,14 @@ fn expand_tilde(path: &str, home: Option<&Path>) -> Result<PathBuf> {
 }
 
 fn prompt(label: &str, help: &str, default: Option<&str>) -> Result<String> {
+    let color = crate::format::stderr_enabled();
+    let label = crate::format::cyan(label, color);
+    let help = crate::format::cyan(help, color);
     prompt_from(
         &mut io::stdin().lock(),
         &mut io::stderr().lock(),
-        label,
-        help,
+        &label,
+        &help,
         default,
     )
 }

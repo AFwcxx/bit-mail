@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt, fs, io,
     path::{Path, PathBuf},
     str::FromStr,
@@ -124,6 +124,16 @@ pub struct SelectionsOutput {
     pub account_id: Uuid,
     pub account_alias: String,
     pub selections: Vec<SelectionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SelectionStatus {
+    pub name: String,
+    pub message_count: usize,
+    pub pending: usize,
+    pub read: usize,
+    pub delete: usize,
+    pub no_work_item: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -501,6 +511,71 @@ pub(crate) fn selection_ids(
     name: &str,
 ) -> Result<Vec<Uuid>> {
     Ok(read_selection(repository, account_id, name)?.message_ids)
+}
+
+pub fn status_snapshot(
+    repository: &Repository,
+    account_id: Uuid,
+) -> Result<(WorkItemCounts, Vec<SelectionStatus>)> {
+    let items = read_work_items(&work_items_dir(repository, account_id))?;
+    let mut counts = WorkItemCounts::default();
+    let states = items
+        .into_iter()
+        .map(|(_, item)| {
+            match item.state {
+                WorkState::Pending => counts.pending += 1,
+                WorkState::Read => counts.read += 1,
+                WorkState::Delete => counts.delete += 1,
+            }
+            (item.message_id, item.state)
+        })
+        .collect::<HashMap<_, _>>();
+    Ok((
+        counts,
+        selection_statuses_with_states(repository, account_id, &states)?,
+    ))
+}
+
+fn selection_statuses_with_states(
+    repository: &Repository,
+    account_id: Uuid,
+    states: &HashMap<Uuid, WorkState>,
+) -> Result<Vec<SelectionStatus>> {
+    let directory = selections_dir(repository, account_id);
+    if !directory.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut result = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| error("invalid selection filename"))?;
+        let selection = read_selection(repository, account_id, name)?;
+        let mut summary = SelectionStatus {
+            name: selection.name,
+            message_count: selection.message_ids.len(),
+            pending: 0,
+            read: 0,
+            delete: 0,
+            no_work_item: 0,
+        };
+        for id in selection.message_ids {
+            match states.get(&id) {
+                Some(WorkState::Pending) => summary.pending += 1,
+                Some(WorkState::Read) => summary.read += 1,
+                Some(WorkState::Delete) => summary.delete += 1,
+                None => summary.no_work_item += 1,
+            }
+        }
+        result.push(summary);
+    }
+    result.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(result)
 }
 
 pub(crate) fn write_pending(
@@ -888,6 +963,51 @@ mod tests {
                 .contains("lock")
         );
         drop(lock);
+    }
+
+    #[test]
+    fn status_snapshot_aggregates_work_items_once_and_reports_overlaps() {
+        let (_directory, repository, account) = repository();
+        let first = Uuid::now_v7();
+        let second = Uuid::now_v7();
+        let third = Uuid::now_v7();
+        let missing = Uuid::now_v7();
+        for id in [first, second, third] {
+            write_pending(&repository, account.id, id).unwrap();
+        }
+        stage(&repository, &account, &[first], WorkState::Read).unwrap();
+        stage(&repository, &account, &[second], WorkState::Delete).unwrap();
+        create_selection(&repository, &account, "one").unwrap();
+        add_selection(&repository, &account, "one", &[first, second]).unwrap();
+        create_selection(&repository, &account, "two").unwrap();
+        add_selection(&repository, &account, "two", &[second, third]).unwrap();
+        write_json_atomic(
+            &selection_path(&repository, account.id, "one"),
+            &Selection {
+                schema_version: SCHEMA_VERSION,
+                account_id: account.id,
+                name: "one".into(),
+                message_ids: vec![first, second, missing],
+            },
+        )
+        .unwrap();
+
+        let (counts, selections) = status_snapshot(&repository, account.id).unwrap();
+        assert_eq!((counts.pending, counts.read, counts.delete), (1, 1, 1));
+        assert_eq!(
+            selections
+                .iter()
+                .map(|selection| (
+                    selection.name.as_str(),
+                    selection.message_count,
+                    selection.pending,
+                    selection.read,
+                    selection.delete,
+                    selection.no_work_item,
+                ))
+                .collect::<Vec<_>>(),
+            [("one", 3, 0, 1, 1, 1), ("two", 2, 1, 0, 1, 0),]
+        );
     }
 
     #[test]

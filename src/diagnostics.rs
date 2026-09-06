@@ -61,15 +61,56 @@ impl DoctorReport {
     }
 
     pub fn render(&self) -> String {
+        if crate::format::is_terminal() {
+            let color = crate::format::enabled();
+            let mut lines = Vec::new();
+            for check in &self.checks {
+                let account = check
+                    .account_id
+                    .map(|id| format!(" account={id}"))
+                    .unwrap_or_default();
+                let status = format!("{:?}", check.status);
+                let status = match check.status {
+                    Status::Ok => crate::format::cyan(status, color),
+                    Status::Warning => crate::format::yellow(status, color),
+                    Status::Error => crate::format::red(status, color),
+                };
+                lines.push(format!(
+                    "{status} · {}{account} · {}",
+                    check.code, check.message
+                ));
+                if let Some(remediation) = &check.remediation {
+                    lines.push(format!("  run: {}", remediation.command));
+                }
+                for finding in &check.findings {
+                    let id = finding.id.map(|id| format!(" id={id}")).unwrap_or_default();
+                    lines.push(format!(
+                        "  finding: {} {}{}",
+                        finding.kind, finding.object, id
+                    ));
+                }
+            }
+            if lines.is_empty() {
+                lines.push("No checks reported.".into());
+            }
+            return crate::format::panel("Doctor", &lines, color);
+        }
+
         let mut output = String::new();
         for check in &self.checks {
             let account = check
                 .account_id
                 .map(|id| format!(" account={id}"))
                 .unwrap_or_default();
+            let status = format!("{:?}", check.status);
+            let status = match check.status {
+                Status::Ok => crate::format::cyan(status, crate::format::enabled()),
+                Status::Warning => crate::format::yellow(status, crate::format::enabled()),
+                Status::Error => crate::format::red(status, crate::format::enabled()),
+            };
             output.push_str(&format!(
-                "{:?}\t{}{}\t{}\n",
-                check.status, check.code, account, check.message
+                "{status}\t{}{}\t{}\n",
+                check.code, account, check.message
             ));
             if let Some(remediation) = &check.remediation {
                 output.push_str(&format!("  run: {}\n", remediation.command));

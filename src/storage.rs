@@ -416,7 +416,11 @@ impl CanonicalStore {
         {
             let _ = writeln!(
                 crate::progress::stderr_writer(),
-                "warning: failed to remove storage staging directory: {cleanup}"
+                "{}",
+                crate::format::yellow(
+                    format!("warning: failed to remove storage staging directory: {cleanup}"),
+                    crate::format::stderr_enabled()
+                )
             );
         }
         result?;
@@ -738,7 +742,11 @@ impl CanonicalStore {
         {
             let _ = writeln!(
                 crate::progress::stderr_writer(),
-                "warning: failed to remove attachment staging directory: {cleanup}"
+                "{}",
+                crate::format::yellow(
+                    format!("warning: failed to remove attachment staging directory: {cleanup}"),
+                    crate::format::stderr_enabled()
+                )
             );
         }
         result

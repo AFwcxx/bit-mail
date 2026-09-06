@@ -1,11 +1,25 @@
 use clap::{Args, Parser, Subcommand};
 
+fn help_styles() -> clap::builder::styling::Styles {
+    use clap::builder::styling::{AnsiColor, Styles};
+
+    Styles::styled()
+        .header(AnsiColor::Cyan.on_default())
+        .usage(AnsiColor::Cyan.on_default())
+        .literal(AnsiColor::Cyan.on_default())
+        .placeholder(AnsiColor::Cyan.on_default())
+        .error(AnsiColor::Red.on_default())
+        .valid(AnsiColor::Cyan.on_default())
+        .invalid(AnsiColor::Yellow.on_default())
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "bit-mail",
     version,
     about = env!("CARGO_PKG_DESCRIPTION"),
-    disable_help_subcommand = true
+    disable_help_subcommand = true,
+    styles = help_styles()
 )]
 pub struct Cli {
     /// Select an account by alias.
@@ -53,7 +67,7 @@ pub enum Command {
     /// Print the selected account's data path.
     Path(AccountScopeArgs),
     /// Show offline repository/account triage status.
-    Status(AccountScopeArgs),
+    Status(StatusArgs),
     /// Pull provider truth into the local repository.
     Pull(PullArgs),
     /// Apply staged local intent to the selected provider account.
@@ -284,6 +298,16 @@ pub struct AccountScopeArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct StatusArgs {
+    /// Select every configured account.
+    #[arg(long)]
+    pub all_accounts: bool,
+    /// Emit the enriched machine-readable status report.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct ConfigArgs {
     #[command(subcommand)]
     pub command: ConfigCommand,
@@ -341,6 +365,14 @@ mod tests {
         let error = Cli::try_parse_from(["bit-mail", "pull", "--all", "--limit", "2"])
             .expect_err("bounds conflict");
         assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn help_uses_the_brand_color() {
+        assert_eq!(
+            Cli::command().get_styles().get_header(),
+            &clap::builder::styling::AnsiColor::Cyan.on_default()
+        );
     }
 
     #[test]

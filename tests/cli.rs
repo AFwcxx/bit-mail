@@ -28,6 +28,13 @@ fn help_is_available_without_provider_setup() {
     assert!(value["commands"].as_array().unwrap().iter().any(|command| {
         command["path"] == serde_json::json!(["push"]) && command["may_mutate_provider"] == true
     }));
+
+    for args in [["--help"].as_slice(), ["status", "--help"].as_slice()] {
+        let redirected = common::bit_mail().args(args).output().unwrap();
+        assert!(redirected.status.success());
+        assert!(!redirected.stdout.contains(&0x1b));
+        assert!(!redirected.stderr.contains(&0x1b));
+    }
 }
 
 #[test]
@@ -177,6 +184,8 @@ fn status_reports_all_accounts_offline_in_alias_order() {
             })
             .unwrap();
     }
+    let alpha = repository.account_by_alias("alpha").unwrap();
+    bit_mail::triage::create_selection(&repository, &alpha, "inbox").unwrap();
     let output = common::bit_mail()
         .current_dir(directory.path())
         .args(["status", "--all-accounts"])
@@ -186,6 +195,53 @@ fn status_reports_all_accounts_offline_in_alias_order() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.starts_with("alpha\tpending=0\tread=0\tdelete=0\tbacklog=unknown"));
     assert!(text.lines().nth(1).unwrap().starts_with("zeta\t"));
+    assert!(!text.contains('\u{1b}'));
+    assert!(output.stderr.is_empty());
+
+    let dumb = common::bit_mail()
+        .current_dir(directory.path())
+        .env("TERM", "dumb")
+        .args(["status", "--all-accounts"])
+        .output()
+        .unwrap();
+    assert!(dumb.status.success());
+    let dumb_text = String::from_utf8(dumb.stdout).unwrap();
+    assert!(dumb_text.starts_with("alpha\tpending=0"));
+    assert!(!dumb_text.contains('╭'));
+
+    let json = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["status", "--all-accounts", "--json"])
+        .output()
+        .unwrap();
+    assert!(json.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["repository"], directory.path().display().to_string());
+    let alpha_report = &report["accounts"][0];
+    assert_eq!(alpha_report["account_id"], serde_json::json!(alpha.id));
+    assert_eq!(alpha_report["alias"], "alpha");
+    assert_eq!(alpha_report["provider"], "gmail");
+    assert_eq!(alpha_report["provider_identity"], serde_json::Value::Null);
+    assert_eq!(alpha_report["pending"], 0);
+    assert_eq!(alpha_report["staged"], 0);
+    assert_eq!(alpha_report["read"], 0);
+    assert_eq!(alpha_report["delete"], 0);
+    assert_eq!(alpha_report["backlog_remaining"], serde_json::Value::Null);
+    assert_eq!(
+        alpha_report["last_successful_pull_ms"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        alpha_report["last_successful_push_ms"],
+        serde_json::Value::Null
+    );
+    assert_eq!(alpha_report["selections"][0]["name"], "inbox");
+    assert_eq!(alpha_report["selections"][0]["message_count"], 0);
+    assert_eq!(alpha_report["selections"][0]["pending"], 0);
+    assert_eq!(alpha_report["selections"][0]["read"], 0);
+    assert_eq!(alpha_report["selections"][0]["delete"], 0);
+    assert_eq!(alpha_report["selections"][0]["no_work_item"], 0);
 
     let conflict = common::bit_mail()
         .current_dir(directory.path())
@@ -194,6 +250,23 @@ fn status_reports_all_accounts_offline_in_alias_order() {
         .unwrap();
     assert!(!conflict.status.success());
     assert!(String::from_utf8_lossy(&conflict.stderr).contains("cannot be used"));
+}
+
+#[test]
+fn empty_all_account_status_keeps_piped_output_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    Repository::initialize(
+        directory.path(),
+        bit_mail::repository::GitIgnorePolicy::Never,
+    )
+    .unwrap();
+    let output = common::bit_mail()
+        .current_dir(directory.path())
+        .args(["status", "--all-accounts"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
 }
 
 #[test]

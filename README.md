@@ -48,6 +48,7 @@ bit-mail init
 bit-mail connect
 bit-mail pull
 bit-mail status
+bit-mail status --json
 bit-mail work-items
 bit-mail show <message-id> --context
 bit-mail stage <message-id> read
