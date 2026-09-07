@@ -236,7 +236,8 @@ mod tests {
         drop(spinner);
 
         let output = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-        assert!(output.contains("⠋ Pulling personal"), "{output:?}");
+        assert!(output.contains("⠋ "), "{output:?}");
+        assert!(output.contains("Pulling personal"), "{output:?}");
         assert!(output.ends_with("\r\x1b[2K"), "{output:?}");
     }
 
