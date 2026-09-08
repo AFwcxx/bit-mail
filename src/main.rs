@@ -1204,7 +1204,7 @@ fn print_pull_result(report: &bit_mail::pull::PullReport) {
                 if remaining { "remaining" } else { "clear" }
             });
             println!(
-                "{}: {:?}; {} seeds, {} threads, {} additional unread, {} new/{} removed work items, {} retries, {} failures, backlog {}",
+                "{}: {:?}; {} seeds, {} threads attempted, {} additional unread, {} new/{} removed work items, {} retries, {} failures, backlog {}",
                 account.alias,
                 account.outcome,
                 account.seeds,
@@ -1236,7 +1236,7 @@ fn print_pull_result(report: &bit_mail::pull::PullReport) {
         });
         let lines = vec![
             format!("Outcome         {:?}", account.outcome),
-            format!("Threads         {}", account.threads),
+            format!("Threads attempted {}", account.threads),
             format!("New work        {}", account.new_work_items),
             format!("Removed work    {}", account.removed_work_items),
             format!("Retries         {retries}"),

@@ -172,12 +172,10 @@ pub fn gc_with_progress(
     let _lock = repository.account_lock(account.id)?;
     if dry_run {
         let mismatches = crate::integrity::validate_account(repository, account.id)?;
-        if let Some(mismatch) = mismatches.first() {
-            return Err(io::Error::other(format!(
-                "integrity mismatch: {} ({})",
-                mismatch.path, mismatch.kind
-            ))
-            .into());
+        if !mismatches.is_empty() {
+            return Err(
+                io::Error::new(io::ErrorKind::InvalidData, "cache integrity mismatch").into(),
+            );
         }
     } else {
         crate::integrity::prepare_account(repository, account.id)?;

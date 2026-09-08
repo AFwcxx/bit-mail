@@ -424,15 +424,18 @@ pub fn run_with_progress(
                 "unreachable provider-derived cache is present",
                 Some("bit-mail gc".into()),
             ),
-            Err(_) => problem(
-                &mut checks,
-                "cache.reachability",
-                Status::Error,
-                "account",
-                id,
-                "cache reachability could not be diagnosed",
-                None,
-            ),
+            Err(error) => {
+                let (message, remediation) = cache_reachability_error(error.as_ref());
+                problem(
+                    &mut checks,
+                    "cache.reachability",
+                    Status::Error,
+                    "account",
+                    id,
+                    message,
+                    remediation.map(str::to_owned),
+                );
+            }
         }
         if !options.full {
             match crate::integrity::validate_account(repository, account.id) {
@@ -533,7 +536,7 @@ fn problem(
     status: Status,
     scope: &'static str,
     account_id: Option<uuid::Uuid>,
-    message: &str,
+    message: impl Into<String>,
     command: Option<String>,
 ) {
     checks.push(Check {
@@ -545,6 +548,29 @@ fn problem(
         findings: Vec::new(),
         remediation: command.map(|command| Remediation { command }),
     });
+}
+
+fn cache_reachability_error(
+    error: &(dyn std::error::Error + 'static),
+) -> (&'static str, Option<&'static str>) {
+    if error.downcast_ref::<serde_json::Error>().is_some() {
+        (
+            "cache reachability failed: cache metadata is malformed",
+            Some("bit-mail cache rebuild"),
+        )
+    } else if error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::InvalidData)
+    {
+        (
+            "cache reachability failed: cache integrity mismatch",
+            Some("bit-mail cache rebuild"),
+        )
+    } else if error.downcast_ref::<std::io::Error>().is_some() {
+        ("cache reachability failed: filesystem access failed", None)
+    } else {
+        ("cache reachability failed: cache validation failed", None)
+    }
 }
 
 fn integrity_problem(
@@ -995,6 +1021,58 @@ mod tests {
                 check.code == "permissions.acl" && check.status == Status::Warning
             }));
         }
+    }
+
+    #[test]
+    fn cache_reachability_reports_a_redacted_cause() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = Repository::initialize(directory.path(), GitIgnorePolicy::Never).unwrap();
+        let account = repository
+            .create_account(NewAccount {
+                alias: "mail",
+                provider: "gmail",
+                provider_identity: None,
+                credential_profile: None,
+            })
+            .unwrap();
+        let marker = "private-cache-marker";
+        let threads = repository
+            .root()
+            .join(".bit-mail/accounts")
+            .join(account.id.to_string())
+            .join("threads");
+        fs::create_dir_all(&threads).unwrap();
+        fs::write(threads.join("unexpected.json"), marker).unwrap();
+
+        let report = run(
+            &repository,
+            Options {
+                account: None,
+                all_accounts: false,
+                full: false,
+                online: false,
+            },
+            &MemoryStore::default(),
+            |_| Ok(()),
+        );
+        let check = report
+            .checks
+            .iter()
+            .find(|check| check.code == "cache.reachability")
+            .unwrap();
+        assert_eq!(check.status, Status::Error);
+        assert_eq!(
+            check.message,
+            "cache reachability failed: cache integrity mismatch"
+        );
+        assert_eq!(
+            check
+                .remediation
+                .as_ref()
+                .map(|value| value.command.as_str()),
+            Some("bit-mail cache rebuild")
+        );
+        assert!(!serde_json::to_string(&report).unwrap().contains(marker));
     }
 
     #[cfg(unix)]
