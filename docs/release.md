@@ -41,6 +41,10 @@ The workflow refuses a tag whose version differs from `Cargo.toml`. A pushed
 `v0.1.3` tag builds the four archives and creates the GitHub Release with
 generated release notes.
 
+After hosted verification, run `./scripts/mark-release.sh` to update the
+README and create the signed commit required before preparing the next patch
+release.
+
 ## Preparing a patch release
 
 On Linux, configure Git signing and install the Rust 1.88.0 toolchain, then run
