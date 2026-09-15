@@ -1,5 +1,9 @@
 # AGENTS.md
 
+Make sure to update ./WORK_REPORT.md whenever there is completed tasks or audit review. Organise it nicely. Keep it concise.
+
+Keep ./docs updated as well. Be detailed and clear so that future implementers can understand easily.
+
 These rules apply to every task in this project unless explicitly overridden.
 Bias: caution over speed on non-trivial work. Use judgment on trivial tasks.
 
