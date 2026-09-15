@@ -45,6 +45,14 @@ Secrets live in the OS credential store, not the repository.
 
 Adapters own retries, rate-limit/backoff behavior, request timeout policy, error mapping, and redacted logging. Bounded concurrency is required for pull/push.
 
+The Gmail adapter serializes requests per client at 500 ms intervals. Gmail's
+current per-user/project quota is 6,000 units per minute and `threads.get`
+costs 40 units, so this worst-case pacing uses at most 4,800 units per minute
+before any other provider operations. Retryable 403, 429, and 5xx responses
+use `Retry-After` when present or exponential delays of 1, 2, 4, 8,
+16, and 32 seconds, with six retries maximum. A shared cooldown slows sibling
+workers after one request is throttled.
+
 ## Tests
 
 Core logic should be testable with a fake provider. Gmail adapter contract tests should use a mock HTTP server. Live Gmail tests are opt-in only.

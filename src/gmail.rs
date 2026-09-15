@@ -163,8 +163,10 @@ pub struct GmailClient {
     request_gate: Mutex<RequestGate>,
 }
 
-// ponytail: fixed account pacing; tune this interval if Gmail quota limits change.
-const REQUEST_INTERVAL: Duration = Duration::from_millis(200);
+// ponytail: fixed account pacing; 40-unit threads.get at 2 requests/sec stays
+// below Gmail's 6,000 quota-units/minute per-user limit.
+const REQUEST_INTERVAL: Duration = Duration::from_millis(500);
+const MAX_RETRIES: u32 = 6;
 
 struct RequestGate {
     next_request_at: Instant,
@@ -263,7 +265,7 @@ impl GmailClient {
         let operation = operation.label();
         let request_id = uuid::Uuid::new_v4();
         let started = Instant::now();
-        for attempt in 0..=3 {
+        for attempt in 0..=MAX_RETRIES {
             self.wait_for_request();
             tracing::debug!(
                 request_id = %request_id,
@@ -315,7 +317,7 @@ impl GmailClient {
                     let delay = retry_delay(&response, attempt);
                     let reason = gmail_error_reason(response);
                     if is_rate_limit_reason(reason.as_deref()) {
-                        if attempt == 3 {
+                        if attempt == MAX_RETRIES {
                             tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "retry_exhausted", elapsed_ms = started.elapsed().as_millis(), status = 403, "provider request retry limit exceeded");
                             break;
                         }
@@ -342,7 +344,7 @@ impl GmailClient {
                 Ok(response)
                     if response.status().as_u16() == 429 || response.status().is_server_error() =>
                 {
-                    if attempt == 3 {
+                    if attempt == MAX_RETRIES {
                         tracing::warn!(
                             request_id = %request_id,
                             provider = "gmail",
@@ -384,7 +386,7 @@ impl GmailClient {
                     )
                     .into());
                 }
-                Err(_) if attempt < 3 => {
+                Err(_) if attempt < MAX_RETRIES => {
                     self.retries.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(
                         request_id = %request_id,
@@ -420,7 +422,7 @@ impl GmailClient {
         let operation = operation.label();
         let request_id = uuid::Uuid::new_v4();
         let started = Instant::now();
-        for attempt in 0..=3 {
+        for attempt in 0..=MAX_RETRIES {
             self.wait_for_request();
             tracing::debug!(request_id = %request_id, provider = "gmail", operation, attempt = attempt + 1, "provider request");
             let sent = self
@@ -459,7 +461,7 @@ impl GmailClient {
                     let delay = retry_delay(&response, attempt);
                     let reason = gmail_error_reason(response);
                     if is_rate_limit_reason(reason.as_deref()) {
-                        if attempt == 3 {
+                        if attempt == MAX_RETRIES {
                             tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "retry_exhausted", elapsed_ms = started.elapsed().as_millis(), status = 403, "provider request retry limit exceeded");
                             break;
                         }
@@ -482,7 +484,7 @@ impl GmailClient {
                 Ok(response)
                     if response.status().as_u16() == 429 || response.status().is_server_error() =>
                 {
-                    if attempt == 3 {
+                    if attempt == MAX_RETRIES {
                         tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "retry_exhausted", elapsed_ms = started.elapsed().as_millis(), status = response.status().as_u16(), "provider request retry limit exceeded");
                         break;
                     }
@@ -507,7 +509,7 @@ impl GmailClient {
                     )
                     .into());
                 }
-                Err(_) if attempt < 3 => {
+                Err(_) if attempt < MAX_RETRIES => {
                     self.retries.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(request_id = %request_id, provider = "gmail", operation, error_class = "transport", elapsed_ms = started.elapsed().as_millis(), attempt = attempt + 1, "provider transport retry");
                     std::thread::sleep(Duration::from_millis(250 << attempt));
@@ -1243,7 +1245,7 @@ mod tests {
         for (responses, invoke, error_class) in [
             (vec![("200 OK", "not-json")], false, "malformed_json"),
             (
-                vec![("500 Internal Server Error", ""); 4],
+                vec![("500 Internal Server Error", ""); (MAX_RETRIES + 1) as usize],
                 true,
                 "retry_exhausted",
             ),
@@ -1421,6 +1423,36 @@ mod tests {
     }
 
     #[test]
+    fn gmail_rate_limit_retries_cover_a_full_quota_recovery_window() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            for attempt in 0..=MAX_RETRIES {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                let (status, body) = if attempt < MAX_RETRIES {
+                    (
+                        "403 Forbidden",
+                        r#"{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}"#,
+                    )
+                } else {
+                    ("200 OK", r#"{"id":"m","threadId":"t","labelIds":[]}"#)
+                };
+                write!(stream, "HTTP/1.1 {status}\r\nRetry-After: 0\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let client = GmailClient::new("token", base).unwrap();
+        assert!(matches!(
+            client.message_state("m").unwrap(),
+            MessageState::Inactive
+        ));
+        assert_eq!(client.retries(), MAX_RETRIES);
+        server.join().unwrap();
+    }
+
+    #[test]
     fn gmail_unknown_and_policy_403s_are_permanent_without_reauthorization() {
         for body in [
             r#"{"error":{"errors":[{"reason":"domainPolicy"}]}}"#,
@@ -1481,7 +1513,7 @@ mod tests {
         });
         let times = server.join().unwrap();
         assert!(times[1].duration_since(times[0]) >= Duration::from_millis(800));
-        assert!(times[2].duration_since(times[1]) >= Duration::from_millis(150));
+        assert!(times[2].duration_since(times[1]) >= Duration::from_millis(450));
         assert!(started.elapsed() >= Duration::from_millis(800));
     }
 

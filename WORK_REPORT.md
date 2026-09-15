@@ -1,5 +1,21 @@
 # Gmail 403 failures after cache rebuild
 
+## 2026-09-16 quota-pacing follow-up
+
+Status: Completed and verified.
+
+The earlier 403 classification fix was correct, but its 200 ms shared request
+interval allowed up to 12,000 quota units per minute for `threads.get`. Gmail's
+current per-user/project limit is 6,000 units/minute and `threads.get` costs 40
+units. The Gmail adapter now paces all requests at 500 ms (4,800 worst-case
+units/minute) and permits six bounded retries with 1/2/4/8/16/32-second default
+backoff. Existing `Retry-After` and shared cooldown behavior remain active.
+
+Added coverage for six consecutive retryable 403 responses, concurrent pacing,
+and the updated retry-exhaustion logging fixture. `cargo fmt --check` passes;
+the full suite passes with 118 library tests, 5 binary tests, 9 CLI tests, 3
+lifecycle tests, 2 terminal tests, and 1 intentionally ignored benchmark.
+
 ## Status
 
 Implementation review: all findings are accepted.
