@@ -41,6 +41,11 @@ The workflow refuses a tag whose version differs from `Cargo.toml`. A pushed
 `v0.1.5` tag builds the four archives and creates the GitHub Release with
 generated release notes.
 
+Hosted verification runs stable Clippy with warnings denied and runs release
+tests on Rust 1.88. The CLI selects Clap's color mode explicitly from `TERM`,
+`NO_COLOR`, and terminal detection so hosted `CI=true` does not override the
+non-color contract used by `TERM=dumb` or piped output.
+
 After hosted verification, run `./scripts/mark-release.sh` to update the
 README and create the signed commit required before preparing the next patch
 release.

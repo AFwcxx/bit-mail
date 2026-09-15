@@ -13,13 +13,22 @@ fn help_styles() -> clap::builder::styling::Styles {
         .invalid(AnsiColor::Yellow.on_default())
 }
 
+fn help_color_choice() -> clap::ColorChoice {
+    if crate::format::enabled() {
+        clap::ColorChoice::Always
+    } else {
+        clap::ColorChoice::Never
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "bit-mail",
     version,
     about = env!("CARGO_PKG_DESCRIPTION"),
     disable_help_subcommand = true,
-    styles = help_styles()
+    styles = help_styles(),
+    color = help_color_choice()
 )]
 pub struct Cli {
     /// Select an account by alias.

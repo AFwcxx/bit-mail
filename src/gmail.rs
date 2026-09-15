@@ -230,12 +230,12 @@ impl GmailClient {
                 start.saturating_duration_since(now)
             };
             std::thread::sleep(delay);
-            if !self
+            if self
                 .request_gate
                 .lock()
                 .unwrap()
                 .cooldown_until
-                .is_some_and(|until| until > Instant::now())
+                .is_none_or(|until| until <= Instant::now())
             {
                 return;
             }

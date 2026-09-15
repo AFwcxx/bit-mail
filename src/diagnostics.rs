@@ -671,7 +671,7 @@ fn permission_checks(repository: &Repository, checks: &mut Vec<Check>) {
                 Status::Warning,
                 "repository",
                 None,
-                &format!("{unsafe_paths} private path(s) have unsafe mode bits"),
+                format!("{unsafe_paths} private path(s) have unsafe mode bits"),
                 Some("chmod -R go-rwx -- .bit-mail data knowledge".into()),
             );
         } else {

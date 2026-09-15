@@ -1,5 +1,21 @@
 # Gmail 403 failures after cache rebuild
 
+## 2026-09-16 GitHub Actions release/CI failures
+
+Status: Fixed locally; hosted verification still required.
+
+The v0.1.5 commit had two stable-Clippy errors: a needless borrow in
+`diagnostics.rs` and a non-minimal boolean in `gmail.rs`. Its Rust 1.88 release
+test also failed because GitHub's inherited `CI=true` made Clap emit ANSI help
+styling despite `TERM=dumb`; the existing terminal test reproduced that exact
+failure. The fix uses the shared formatter's explicit color policy for Clap and
+applies Clippy's suggested expressions.
+
+Verified locally with `cargo clippy --all-targets --all-features -- -D warnings`
+and `CI=true GITHUB_ACTIONS=true RUNNER_OS=Linux cargo +1.88.0 test --locked
+--all-features`; both now pass. The latter previously failed only in
+`terminal_status_uses_real_width_and_independent_color_rules`.
+
 ## 2026-09-16 quota-pacing follow-up
 
 Status: Completed and verified.
