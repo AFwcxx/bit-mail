@@ -44,7 +44,9 @@ generated release notes.
 Hosted verification runs stable Clippy with warnings denied and runs release
 tests on Rust 1.88. The CLI selects Clap's color mode explicitly from `TERM`,
 `NO_COLOR`, and terminal detection so hosted `CI=true` does not override the
-non-color contract used by `TERM=dumb` or piped output.
+non-color contract used by `TERM=dumb` or piped output. The Unix terminal
+integration harness uses platform-correct `openpty` and `ioctl` FFI arguments;
+both Linux and macOS matrix jobs must compile it before a release is accepted.
 
 After hosted verification, run `./scripts/mark-release.sh` to update the
 README and create the signed commit required before preparing the next patch

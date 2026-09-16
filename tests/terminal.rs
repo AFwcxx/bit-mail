@@ -19,7 +19,7 @@ use bit_mail::repository::{GitIgnorePolicy, NewAccount, Repository};
 fn pty_pair(columns: u16) -> io::Result<(File, File)> {
     let mut master = -1;
     let mut slave = -1;
-    let window = libc::winsize {
+    let mut window = libc::winsize {
         ws_row: 24,
         ws_col: columns,
         ws_xpixel: 0,
@@ -31,7 +31,7 @@ fn pty_pair(columns: u16) -> io::Result<(File, File)> {
             &mut slave,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            &window,
+            std::ptr::from_mut(&mut window),
         )
     };
     if result == -1 {
@@ -121,7 +121,11 @@ fn run_pty(
             if libc::setsid() == -1 {
                 return Err(io::Error::last_os_error());
             }
-            if libc::ioctl(0, libc::TIOCSCTTY as libc::Ioctl, 0) == -1 {
+            #[cfg(target_os = "macos")]
+            let request = libc::TIOCSCTTY as libc::c_ulong;
+            #[cfg(not(target_os = "macos"))]
+            let request = libc::TIOCSCTTY;
+            if libc::ioctl(0, request, 0) == -1 {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
