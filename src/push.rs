@@ -419,6 +419,8 @@ fn provider_failure(
     match error.downcast_ref::<ProviderError>().map(|error| error.0) {
         Some(ProviderErrorKind::Missing) => (ItemOutcome::Missing, None),
         Some(ProviderErrorKind::Authentication) => (ItemOutcome::Failed, Some("authentication")),
+        Some(ProviderErrorKind::RateLimited) => (ItemOutcome::Failed, Some("rate_limited")),
+        Some(ProviderErrorKind::Transient) => (ItemOutcome::Failed, Some("transient")),
         _ => (ItemOutcome::Failed, Some("permanent")),
     }
 }
@@ -799,6 +801,19 @@ mod tests {
             1
         );
         assert!(report.last_successful_push_ms.is_none());
+    }
+
+    #[test]
+    fn exhausted_provider_failures_keep_retry_categories() {
+        for (kind, label) in [
+            (ProviderErrorKind::RateLimited, "rate_limited"),
+            (ProviderErrorKind::Transient, "transient"),
+        ] {
+            let (outcome, failure_kind) =
+                provider_failure(ProviderError(kind, "retry exhausted").into());
+            assert_eq!(outcome, ItemOutcome::Failed);
+            assert_eq!(failure_kind, Some(label));
+        }
     }
 
     #[test]

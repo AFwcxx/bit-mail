@@ -45,13 +45,18 @@ Secrets live in the OS credential store, not the repository.
 
 Adapters own retries, rate-limit/backoff behavior, request timeout policy, error mapping, and redacted logging. Bounded concurrency is required for pull/push.
 
-The Gmail adapter serializes requests per client at 500 ms intervals. Gmail's
-current per-user/project quota is 6,000 units per minute and `threads.get`
-costs 40 units, so this worst-case pacing uses at most 4,800 units per minute
-before any other provider operations. Retryable 403, 429, and 5xx responses
-use `Retry-After` when present or exponential delays of 1, 2, 4, 8,
-16, and 32 seconds, with six retries maximum. A shared cooldown slows sibling
-workers after one request is throttled.
+The Gmail adapter serializes requests per client and schedules them by the
+documented method quota cost. It starts at 80% of the 6,000-unit per-user /
+project allowance (4,800 units per minute), halves that budget after a 403 or
+429 throttle, and slowly recovers after sustained success. Retryable 403, 429,
+and 5xx responses use `Retry-After` when present or exponential delays of 1,
+2, 4, 8, 16, and 32 seconds, with six retries maximum.
+
+Pulls persist an anchored, account-scoped resume record containing unresolved
+thread IDs. A failed pull does not advance the provider cursor; the next pull
+retries only those IDs and advances the cursor after all required threads are
+resolved. A thread that disappears with HTTP 404 is reported as missing and
+remains retryable so provider data cannot be silently dropped.
 
 ## Tests
 

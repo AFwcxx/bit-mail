@@ -1,5 +1,55 @@
 # Gmail 403 failures after cache rebuild
 
+## 2026-09-17 top-level pull diagnostics and cooldown cleanup
+
+Status: Completed and verified.
+
+Top-level pull failures now preserve error causes in schema-v2 reports:
+authentication, integrity, locking, state, and filesystem failures are no
+longer mislabeled as provider failures. Ordinary 429/5xx retries now extend
+shared cooldown exactly once, while terminal responses retain the final
+`Retry-After` delay.
+
+## 2026-09-17 terminal retry cooldown correction
+
+Status: Completed and verified.
+
+GET and POST retryable Gmail responses now extend the shared cooldown before
+checking retry exhaustion, so a final 403, 429, or 5xx response still delays
+pending sibling requests according to `Retry-After`. Added regression coverage
+for terminal GET rate-limit and POST transient responses.
+
+## 2026-09-17 push retry-category correction
+
+Status: Completed and verified.
+
+Push error mapping now preserves Gmail `RateLimited` and `Transient` retry
+categories instead of reporting both as permanent failures. Added assertions for
+direct push mapping and exhausted Gmail 429/5xx responses. Focused tests pass.
+
+## 2026-09-17 durable pull recovery
+
+Status: Completed and verified.
+
+The pull path now reports categorized thread failures instead of collapsing every
+error into one counter. Gmail retry exhaustion distinguishes rate-limited and
+transient failures. Requests are serialized per account and paced by Gmail
+method quota cost, starting at 80% of the documented 6,000-unit user/project
+budget; throttling halves the working budget and sustained success restores it
+gradually.
+
+Partial pulls persist an integrity-covered resume record containing the discovery
+anchor and unresolved thread IDs. A later pull retries only those threads and
+advances the provider cursor only after the pending set is resolved. A vanished
+thread (404) is counted as missing and remains retryable. Pull JSON is now schema
+version 2 with `failure_counts` and `resume_pending`; the known html5ever foster
+parenting warning is filtered from operational stderr.
+
+The full all-target test suite passes with 118 library tests and one intentionally
+ignored benchmark, plus the existing binary, CLI, lifecycle, terminal, and
+benchmark-target checks. Gmail mock-server tests require network namespace
+permission to bind loopback listeners in this environment.
+
 ## 2026-09-16 GitHub Actions release/CI failures
 
 Status: Fixed locally; hosted macOS verification required.

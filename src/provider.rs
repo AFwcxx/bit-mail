@@ -5,6 +5,8 @@ pub enum ProviderErrorKind {
     Authentication,
     HistoryExpired,
     Missing,
+    RateLimited,
+    Transient,
     Permanent,
 }
 

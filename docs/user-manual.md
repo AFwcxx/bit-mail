@@ -149,6 +149,14 @@ bit-mail pull --json
 
 In JSON output, `retries` or `backlog_remaining` is `null` when a pull stops before that value can be known.
 
+Pull JSON uses schema version 2 and includes `failure_counts` plus
+`resume_pending`. If Gmail throttles or another retryable thread error remains,
+the pull exits after bounded retries while retaining completed work and the
+unresolved thread list. Run `bit-mail pull` again to resume; it does not repeat
+completed thread fetches or advance the Gmail cursor past unresolved work.
+Top-level failures classify local integrity, locking, state, and filesystem
+errors separately from provider failures.
+
 ### Pull blocking
 
 `pending` items do **not** block pull.

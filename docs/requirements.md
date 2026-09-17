@@ -569,6 +569,11 @@ Retries:
 
 Provider cursors/checkpoints advance conservatively so failed items cannot disappear from future consideration.
 
+When a pull partially succeeds, the account stores an integrity-covered resume
+record with its discovery anchor and unresolved thread IDs. A later pull retries
+that record before performing new discovery, preserving completed work while
+keeping the provider cursor unchanged until the pending set is resolved.
+
 `push` commits successful messages independently. There is no fake cross-message transaction or rollback model. Failed operations remain staged.
 
 ## 26. Concurrency and locking

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs, io,
     path::{Path, PathBuf},
     sync::{
@@ -22,7 +22,8 @@ use crate::{
     triage,
 };
 
-const SCHEMA_VERSION: u32 = 1;
+const REPORT_SCHEMA_VERSION: u32 = 2;
+const STATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy)]
 pub struct PullOptions {
@@ -52,6 +53,8 @@ pub struct AccountReport {
     pub backlog_remaining: Option<bool>,
     pub history_fallback: bool,
     pub failures: usize,
+    pub failure_counts: BTreeMap<String, usize>,
+    pub resume_pending: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,7 +66,7 @@ pub struct PullReport {
 impl PullReport {
     pub fn new(accounts: Vec<AccountReport>) -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
+            schema_version: REPORT_SCHEMA_VERSION,
             accounts,
         }
     }
@@ -77,6 +80,19 @@ impl PullReport {
 pub fn failed_account_report(account: &AccountConfig) -> AccountReport {
     let mut value = report(account, Outcome::Failed);
     value.failures = 1;
+    value.failure_counts.insert("provider".to_owned(), 1);
+    value
+}
+
+pub fn failed_account_report_with_error(
+    account: &AccountConfig,
+    error: &(dyn std::error::Error + Send + Sync + 'static),
+) -> AccountReport {
+    let mut value = report(account, Outcome::Failed);
+    value.failures = 1;
+    value
+        .failure_counts
+        .insert(top_level_failure_category(error).to_owned(), 1);
     value
 }
 
@@ -90,6 +106,20 @@ struct ProviderState {
     last_successful_pull_ms: Option<u64>,
     #[serde(default)]
     last_successful_push_ms: Option<u64>,
+    #[serde(default)]
+    resume: Option<PullResume>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PullResume {
+    schema_version: u32,
+    next_history: String,
+    next_backlog: Option<String>,
+    history_fallback: bool,
+    seed_ids: Vec<String>,
+    pending_thread_ids: Vec<String>,
+    active_message_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,8 +131,8 @@ pub struct ProviderStatus {
 
 pub fn provider_status(repository: &Repository, account_id: Uuid) -> Result<ProviderStatus> {
     let path = Paths::new(repository, account_id).provider_state;
-    let exists = path.exists();
     let state = read_state(&path)?;
+    let exists = path.exists() && state.history_id.is_some();
     Ok(ProviderStatus {
         backlog_remaining: exists.then_some(state.backlog_remaining),
         last_successful_pull_ms: state.last_successful_pull_ms,
@@ -155,8 +185,11 @@ where
     let provider = provider()?;
     let store = CanonicalStore::new(repository, account)?;
     let mut state = read_state(&paths.provider_state)?;
-    let initial = state.history_id.is_none();
-    let mut next_history = if initial {
+    let resume = state.resume.take();
+    let initial = resume.is_none() && state.history_id.is_none();
+    let mut next_history = if let Some(resume) = &resume {
+        resume.next_history.clone()
+    } else if initial {
         provider.current_history_id()?
     } else {
         state.history_id.clone().unwrap()
@@ -165,8 +198,16 @@ where
     let mut seed_ids = HashSet::new();
     let mut removed = 0;
     let mut fallback = false;
+    let mut next_backlog = None;
+    let mut active = HashSet::new();
 
-    if !initial {
+    if let Some(resume) = &resume {
+        thread_ids.extend(resume.pending_thread_ids.iter().cloned());
+        seed_ids.extend(resume.seed_ids.iter().cloned());
+        fallback = resume.history_fallback;
+        next_backlog = resume.next_backlog.clone();
+        active.extend(resume.active_message_ids.iter().copied());
+    } else if !initial {
         let mut page = None;
         loop {
             match provider.history_page(state.history_id.as_deref().unwrap(), page.as_deref()) {
@@ -225,9 +266,8 @@ where
     } else {
         state.backlog_page_token.clone()
     };
-    let mut next_backlog = None;
     let mut restarted_backlog = false;
-    while (initial || unlimited || state.backlog_remaining) && remaining > 0 {
+    while resume.is_none() && (initial || unlimited || state.backlog_remaining) && remaining > 0 {
         let size = remaining.min(500);
         let values = match provider.unread_page(page.as_deref(), size) {
             Ok(values) => values,
@@ -263,9 +303,9 @@ where
     result.seeds = seed_ids.len();
     result.threads = fetched.len();
     result.removed_work_items = removed;
-    let mut active = HashSet::new();
+    let mut pending = BTreeSet::new();
     crate::progress::phase(progress, format!("Saving messages for {}", account.alias));
-    for fetched in fetched {
+    for (thread_id, fetched) in fetched {
         match fetched {
             Ok(thread) => {
                 let ids = store.materialize_thread_unlocked(&thread)?;
@@ -279,19 +319,28 @@ where
                     }
                 }
             }
-            Err(_) => result.failures += 1,
+            Err(error) => {
+                let category = failure_category(error.as_ref());
+                *result
+                    .failure_counts
+                    .entry(category.to_owned())
+                    .or_default() += 1;
+                result.failures += 1;
+                pending.insert(thread_id);
+            }
         }
     }
-    if fallback && result.failures == 0 {
+    if fallback && pending.is_empty() {
         result.removed_work_items += triage::prune_pending(repository, account.id, &active)?;
     }
     result.retries = Some(provider.retries());
     result.history_fallback = fallback;
     let backlog_remaining = next_backlog.is_some();
     result.backlog_remaining = Some(backlog_remaining);
-    if result.failures == 0 {
+    result.resume_pending = pending.len();
+    if pending.is_empty() {
         state = ProviderState {
-            schema_version: SCHEMA_VERSION,
+            schema_version: STATE_SCHEMA_VERSION,
             history_id: Some(next_history),
             backlog_page_token: next_backlog,
             backlog_remaining,
@@ -299,9 +348,20 @@ where
                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
             ),
             last_successful_push_ms: state.last_successful_push_ms,
+            resume: None,
         };
         write_json_atomic(&paths.provider_state, &state)?;
     } else {
+        state.resume = Some(PullResume {
+            schema_version: STATE_SCHEMA_VERSION,
+            next_history,
+            next_backlog,
+            history_fallback: fallback,
+            seed_ids: seed_ids.into_iter().collect(),
+            pending_thread_ids: pending.into_iter().collect(),
+            active_message_ids: active.into_iter().collect(),
+        });
+        write_json_atomic(&paths.provider_state, &state)?;
         result.outcome = Outcome::Failed;
     }
     crate::progress::phase(progress, format!("Finalizing {}", account.alias));
@@ -313,7 +373,7 @@ pub(crate) fn record_successful_push(repository: &Repository, account_id: Uuid) 
     let path = Paths::new(repository, account_id).provider_state;
     let mut state = read_state(&path)?;
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
-    state.schema_version = SCHEMA_VERSION;
+    state.schema_version = STATE_SCHEMA_VERSION;
     state.last_successful_push_ms = Some(timestamp);
     write_json_atomic(&path, &state)?;
     Ok(timestamp)
@@ -416,7 +476,7 @@ where
 fn fetch_threads(
     provider: &dyn MailProvider,
     ids: Vec<String>,
-) -> Vec<Result<crate::storage::ThreadInput>> {
+) -> Vec<(String, Result<crate::storage::ThreadInput>)> {
     let next = AtomicUsize::new(0);
     let results = Mutex::new(Vec::with_capacity(ids.len()));
     std::thread::scope(|scope| {
@@ -427,14 +487,68 @@ fn fetch_threads(
                     let Some(id) = ids.get(index) else {
                         break;
                     };
-                    results.lock().unwrap().push((index, provider.thread(id)));
+                    results
+                        .lock()
+                        .unwrap()
+                        .push((index, id.clone(), provider.thread(id)));
                 }
             });
         }
     });
     let mut results = results.into_inner().unwrap();
     results.sort_by_key(|v| v.0);
-    results.into_iter().map(|v| v.1).collect()
+    results.into_iter().map(|v| (v.1, v.2)).collect()
+}
+
+fn failure_category(error: &(dyn std::error::Error + Send + Sync + 'static)) -> &'static str {
+    let kind = error.downcast_ref::<ProviderError>().map(|error| error.0);
+    match kind {
+        Some(ProviderErrorKind::Authentication) => "authentication",
+        Some(ProviderErrorKind::Missing) => "missing",
+        Some(ProviderErrorKind::RateLimited) => "rate_limited",
+        Some(ProviderErrorKind::Transient) => "transient",
+        Some(ProviderErrorKind::HistoryExpired) => "provider",
+        Some(ProviderErrorKind::Permanent) => "provider",
+        None => "content",
+    }
+}
+
+fn top_level_failure_category(
+    error: &(dyn std::error::Error + Send + Sync + 'static),
+) -> &'static str {
+    if let Some(kind) = error.downcast_ref::<ProviderError>().map(|error| error.0) {
+        return match kind {
+            ProviderErrorKind::Authentication => "authentication",
+            ProviderErrorKind::Missing
+            | ProviderErrorKind::HistoryExpired
+            | ProviderErrorKind::RateLimited
+            | ProviderErrorKind::Transient
+            | ProviderErrorKind::Permanent => "provider",
+        };
+    }
+    if error.downcast_ref::<serde_json::Error>().is_some() {
+        return "state";
+    }
+    if let Some(error) = error.downcast_ref::<io::Error>() {
+        let message = error.to_string().to_ascii_lowercase();
+        if message.contains("integrity") {
+            return "integrity";
+        }
+        if message.contains("lock") {
+            return "locking";
+        }
+        if message.contains("oauth")
+            || message.contains("authorization")
+            || message.contains("reauthorize")
+        {
+            return "authentication";
+        }
+        if message.contains("schema") || message.contains("provider state") {
+            return "state";
+        }
+        return "filesystem";
+    }
+    "provider"
 }
 
 struct Paths {
@@ -467,18 +581,27 @@ fn report(account: &AccountConfig, outcome: Outcome) -> AccountReport {
         backlog_remaining: None,
         history_fallback: false,
         failures: 0,
+        failure_counts: BTreeMap::new(),
+        resume_pending: 0,
     }
 }
 fn read_state(path: &Path) -> Result<ProviderState> {
     if !path.exists() {
         return Ok(ProviderState {
-            schema_version: SCHEMA_VERSION,
+            schema_version: STATE_SCHEMA_VERSION,
             ..Default::default()
         });
     }
     let state: ProviderState = serde_json::from_slice(&fs::read(path)?)?;
-    if state.schema_version != SCHEMA_VERSION {
+    if state.schema_version != STATE_SCHEMA_VERSION {
         return Err(io::Error::other("unsupported provider state schema").into());
+    }
+    if state
+        .resume
+        .as_ref()
+        .is_some_and(|resume| resume.schema_version != STATE_SCHEMA_VERSION)
+    {
+        return Err(io::Error::other("unsupported pull resume schema").into());
     }
     Ok(state)
 }
@@ -528,7 +651,9 @@ mod tests {
         pages: Mutex<Vec<Option<String>>>,
     }
 
-    struct FailedThread;
+    struct FailedThread {
+        fail_bad: bool,
+    }
     impl MailProvider for FailedThread {
         fn current_history_id(&self) -> Result<String> {
             Ok("10".into())
@@ -555,7 +680,7 @@ mod tests {
             unreachable!()
         }
         fn thread(&self, id: &str) -> Result<ThreadInput> {
-            if id == "bad" {
+            if id == "bad" && self.fail_bad {
                 Err(io::Error::other("failed thread").into())
             } else {
                 Ok(ThreadInput {
@@ -889,7 +1014,7 @@ mod tests {
             &provider,
             (0..8).map(|index| format!("thread-{index}")).collect(),
         );
-        assert!(fetched.into_iter().all(|result| result.is_ok()));
+        assert!(fetched.into_iter().all(|result| result.1.is_ok()));
         let peak = provider.peak.load(Ordering::SeqCst);
         assert!(
             (1..=4).contains(&peak),
@@ -1135,16 +1260,20 @@ mod tests {
                 limit: 2,
                 all: false,
             },
-            || Ok(Box::new(FailedThread)),
+            || Ok(Box::new(FailedThread { fail_bad: true })),
         )
         .unwrap();
         let paths = Paths::new(&repository, account.id);
         assert!(matches!(report.outcome, Outcome::Failed));
         assert_eq!(report.failures, 1);
+        assert_eq!(report.failure_counts.get("content"), Some(&1));
+        assert_eq!(report.resume_pending, 1);
+        let state = read_state(&paths.provider_state).unwrap();
         assert!(
-            !paths.provider_state.exists(),
+            state.history_id.is_none(),
             "failed work must not advance checkpoints"
         );
+        assert_eq!(state.resume.unwrap().pending_thread_ids.len(), 1);
         assert_eq!(
             fs::read_dir(repository.data_dir(account.id).join("messages"))
                 .unwrap()
@@ -1152,6 +1281,21 @@ mod tests {
             1,
             "only the complete thread may publish"
         );
+
+        let resumed = pull_account(
+            &repository,
+            &account,
+            PullOptions {
+                limit: 2,
+                all: false,
+            },
+            || Ok(Box::new(FailedThread { fail_bad: false })),
+        )
+        .unwrap();
+        assert!(matches!(resumed.outcome, Outcome::Success));
+        let state = read_state(&paths.provider_state).unwrap();
+        assert_eq!(state.history_id.as_deref(), Some("10"));
+        assert!(state.resume.is_none());
     }
 
     #[test]

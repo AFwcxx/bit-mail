@@ -45,7 +45,7 @@ fn pull_accounts(
                             account.alias
                         ))
                     );
-                    bit_mail::pull::failed_account_report(account)
+                    bit_mail::pull::failed_account_report_with_error(account, error.as_ref())
                 }
             })
             .collect(),
@@ -66,11 +66,15 @@ fn tracing_level(verbose: bool) -> tracing::Level {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
     tracing_subscriber::fmt()
         .with_target(false)
         .with_max_level(tracing_level(cli.verbose))
         .with_ansi(bit_mail::format::stderr_enabled())
-        .with_writer(bit_mail::progress::stderr_writer)
+        .with_writer(bit_mail::progress::stderr_writer.with_filter(|metadata| {
+            metadata.target() != "html5ever::tree_builder"
+                || *metadata.level() != tracing::Level::WARN
+        }))
         .try_init()?;
     match cli.command {
         None => {
@@ -1204,7 +1208,7 @@ fn print_pull_result(report: &bit_mail::pull::PullReport) {
                 if remaining { "remaining" } else { "clear" }
             });
             println!(
-                "{}: {:?}; {} seeds, {} threads attempted, {} additional unread, {} new/{} removed work items, {} retries, {} failures, backlog {}",
+                "{}: {:?}; {} seeds, {} threads attempted, {} additional unread, {} new/{} removed work items, {} retries, {} failures, causes {:?}, resume pending {}, backlog {}",
                 account.alias,
                 account.outcome,
                 account.seeds,
@@ -1214,6 +1218,8 @@ fn print_pull_result(report: &bit_mail::pull::PullReport) {
                 account.removed_work_items,
                 retries,
                 account.failures,
+                account.failure_counts,
+                account.resume_pending,
                 backlog
             );
         }
@@ -1241,6 +1247,8 @@ fn print_pull_result(report: &bit_mail::pull::PullReport) {
             format!("Removed work    {}", account.removed_work_items),
             format!("Retries         {retries}"),
             format!("Failures        {}", account.failures),
+            format!("Failure causes  {:?}", account.failure_counts),
+            format!("Resume pending  {}", account.resume_pending),
             format!(
                 "Backlog         {}",
                 bit_mail::format::yellow(backlog, color)
@@ -1298,6 +1306,28 @@ mod tests {
 
         assert!(json["retries"].is_null());
         assert!(json["backlog_remaining"].is_null());
+    }
+
+    #[test]
+    fn top_level_pull_failures_keep_local_error_categories() {
+        for (message, category) in [
+            ("integrity mismatch: account", "integrity"),
+            ("lock is held at account.lock", "locking"),
+            ("unsupported provider state schema", "state"),
+            (
+                "Gmail refresh token is missing; reauthorize the account",
+                "authentication",
+            ),
+            ("permission denied", "filesystem"),
+        ] {
+            let error: Box<dyn std::error::Error + Send + Sync> =
+                std::io::Error::other(message).into();
+            let report = bit_mail::pull::failed_account_report_with_error(
+                &account("failed"),
+                error.as_ref(),
+            );
+            assert_eq!(report.failure_counts.get(category), Some(&1));
+        }
     }
 
     #[test]
